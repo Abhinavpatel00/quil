@@ -10,6 +10,7 @@
     0x585858FFu, /* gutter_fg */ \
     0x12121266u, /* line_hl */ \
     0x30303066u, /* selection */ \
+    0xF9E2AF55u, /* search */ \
     0xEEEEEEFFu, /* cursor */ \
     0x000000FFu, /* status_bg */ \
     0x8A8A8AFFu, /* status_fg */ \
@@ -52,6 +53,7 @@ static uint32_t* theme_slot(QuillTheme* t, const char* k)
     if (strcmp(k, "gutter_fg") == 0) return &t->gutter_fg;
     if (strcmp(k, "line_hl") == 0) return &t->line_hl;
     if (strcmp(k, "selection") == 0) return &t->selection;
+    if (strcmp(k, "search") == 0) return &t->search;
     if (strcmp(k, "cursor") == 0) return &t->cursor;
     if (strcmp(k, "status_bg") == 0) return &t->status_bg;
     if (strcmp(k, "status_fg") == 0) return &t->status_fg;

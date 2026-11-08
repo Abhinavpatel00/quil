@@ -19,6 +19,9 @@ typedef struct MotionConfig
     float       trail_size;
     bool        smooth_blink;
     bool        animate_insert;
+    /* Faint vertical rules at each indent stop. Pure chrome, drawn behind the
+     * text, so it never changes glyph or cursor geometry. */
+    bool        indent_guides;
     uint32_t    vfx_modes;
     float       vfx_opacity;
     float       vfx_lifetime;
@@ -32,6 +35,14 @@ typedef struct MotionConfig
     char        background_image[QUILL_BG_PATH];
     BackgroundFit background_fit;
     float       editor_opacity;
+    /* Wallpaper readability: 0 keeps the image untouched (the default), 1 is
+     * black. Vignette darkens the screen edges on top of that. */
+    float       background_dim;
+    float       background_vignette;
+    /* Whole-window opacity: 1 keeps the window opaque (the default). Below 1
+     * the compositor blends the editor with the desktop; requires a
+     * compositor that advertises PRE_MULTIPLIED (Wayland does). */
+    float       window_opacity;
     /* Theme: palette file; empty keeps the built-in Noir. */
     char        theme[QUILL_BG_PATH];
     /* Session: reopen last buffers + cursor/scroll on launch. */

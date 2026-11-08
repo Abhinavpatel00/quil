@@ -110,7 +110,7 @@ typedef enum QMode
 
 typedef struct QuillTheme
 {
-    uint32_t bg, fg, gutter_bg, gutter_fg, line_hl, selection, cursor;
+    uint32_t bg, fg, gutter_bg, gutter_fg, line_hl, selection, search, cursor;
     uint32_t status_bg, status_fg, accent;
     uint32_t syntax[16];
 } QuillTheme;

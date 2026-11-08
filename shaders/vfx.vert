@@ -4,7 +4,7 @@ layout(location = 1) in vec4 in_color;
 layout(location = 2) in vec4 in_params;
 layout(location = 3) in vec2 in_size;
 layout(location = 4) in vec2 in_uv;
-layout(push_constant) uniform Push { vec2 screen; } push;
+layout(push_constant) uniform Push { vec2 screen; float window; float pad; } push;
 layout(location = 0) out vec4 v_color;
 layout(location = 1) out vec4 v_params;
 layout(location = 2) out vec2 v_size;

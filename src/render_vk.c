@@ -33,7 +33,12 @@
 #define GLYPH_VERT_SIZE (QUILL_MAX_GLYPHS * 6u * 32u)
 #define VFX_VERT_SIZE   ((VkDeviceSize)QUILL_MAX_VFX * 6u * sizeof(VfxVert))
 
-typedef struct SolidVert { float pos[2]; float color[4]; } SolidVert;
+/* uv/size/radius feed the rounded-rect SDF in solid.frag. Quads with
+ * radius = 0 take the pixel-exact path, so text highlights and the cursor
+ * keep the sharp edges they had before rounding existed. */
+typedef struct SolidVert {
+    float pos[2]; float color[4]; float uv[2]; float size[2]; float radius; float pad;
+} SolidVert;
 typedef struct GlyphVert { float pos[2]; float uv[2]; float color[4]; } GlyphVert;
 typedef struct VfxVert { float pos[2]; float color[4]; float params[4]; float size[2]; float uv[2]; } VfxVert;
 
@@ -102,6 +107,11 @@ struct VkRenderer
     VkPipeline       bg_pipe;
     uint32_t         bg_w, bg_h;
     BackgroundFit    bg_fit;
+    float            bg_dim, bg_vignette;
+    /* Whole-window opacity; 1 is opaque. Every shader premultiplies its
+     * output by this, and the swapchain uses PRE_MULTIPLIED when available,
+     * so the compositor can blend the window with the desktop. */
+    float            window_opacity;
 
     FrameRes         frames[QUILL_FRAMES];
     uint32_t         frame_index;
@@ -275,11 +285,21 @@ static bool make_pipeline(VkRenderer* r, const uint32_t* vs, size_t vs_size,
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     memset(&cba, 0, sizeof cba);
     cba.blendEnable = VK_TRUE;
-    cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    /* Premultiplied source-over. Every shader multiplies rgb and alpha by the
+     * quad's own alpha (and the window opacity) before writing, which makes
+     * opaque frames render exactly as before while letting a translucent
+     * window composite correctly: alpha accumulates toward the cleared value
+     * instead of doubling. */
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     cba.colorBlendOp = VK_BLEND_OP_ADD;
-    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    /* Leave the destination alpha alone. The window alpha is set once by the
+     * clear (window_opacity) and must stay there; accumulating source alpha
+     * would push it back toward 1 and cancel the transparency (a 0.5 window
+     * measured 0.86 with the usual ONE / ONE_MINUS_SRC_ALPHA alpha factors).
+     * Colour still composites normally, premultiplied. */
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     cba.alphaBlendOp = VK_BLEND_OP_ADD;
     cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -426,22 +446,22 @@ static bool create_pipelines(VkRenderer* r)
     VkPushConstantRange solid_pc, glyph_pc, vfx_pc;
     VkPipelineLayoutCreateInfo pl;
     VkVertexInputBindingDescription sb, gb, vb;
-    VkVertexInputAttributeDescription sa[2], ga[3], va[5];
+    VkVertexInputAttributeDescription sa[5], ga[3], va[5];
 
     memset(&solid_pc, 0, sizeof solid_pc);
     solid_pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    solid_pc.size = 8u;
+    solid_pc.size = 16u; /* vec2 screen + float window + float pad */
     memset(&glyph_pc, 0, sizeof glyph_pc);
     glyph_pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    glyph_pc.size = 16u;
+    glyph_pc.size = 24u; /* vec2 screen + gamma + contrast + window + pad */
     memset(&pl, 0, sizeof pl);
     pl.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pl.pushConstantRangeCount = 1u;
     pl.pPushConstantRanges = &solid_pc;
     VK_TRY(vkCreatePipelineLayout(r->dev, &pl, NULL, &r->solid_layout));
     memset(&vfx_pc, 0, sizeof vfx_pc);
-    vfx_pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    vfx_pc.size = 8u;
+    vfx_pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    vfx_pc.size = 16u; /* vec2 screen + float window + float pad */
     pl.pushConstantRangeCount = 1u;
     pl.pPushConstantRanges = &vfx_pc;
     pl.setLayoutCount = 0u;
@@ -456,8 +476,11 @@ static bool create_pipelines(VkRenderer* r)
     sb.binding = 0u; sb.stride = sizeof(SolidVert); sb.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     sa[0].binding = 0u; sa[0].location = 0u; sa[0].format = VK_FORMAT_R32G32_SFLOAT; sa[0].offset = 0u;
     sa[1].binding = 0u; sa[1].location = 1u; sa[1].format = VK_FORMAT_R32G32B32A32_SFLOAT; sa[1].offset = 8u;
+    sa[2].binding = 0u; sa[2].location = 2u; sa[2].format = VK_FORMAT_R32G32_SFLOAT; sa[2].offset = 24u;
+    sa[3].binding = 0u; sa[3].location = 3u; sa[3].format = VK_FORMAT_R32G32_SFLOAT; sa[3].offset = 32u;
+    sa[4].binding = 0u; sa[4].location = 4u; sa[4].format = VK_FORMAT_R32_SFLOAT; sa[4].offset = 40u;
     if (!make_pipeline(r, solid_vert, sizeof solid_vert, solid_frag, sizeof solid_frag,
-                       &sb, sa, 2u, r->solid_layout, &r->solid_pipe))
+                       &sb, sa, 5u, r->solid_layout, &r->solid_pipe))
         return false;
     gb.binding = 0u; gb.stride = sizeof(GlyphVert); gb.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     ga[0].binding = 0u; ga[0].location = 0u; ga[0].format = VK_FORMAT_R32G32_SFLOAT; ga[0].offset = 0u;
@@ -489,7 +512,7 @@ static bool create_bg_pipeline(VkRenderer* r)
     if (r->bg_layout) { vkDestroyPipelineLayout(r->dev, r->bg_layout, NULL); r->bg_layout = VK_NULL_HANDLE; }
     memset(&pc, 0, sizeof pc);
     pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pc.size = 24u; /* vec2 uv_scale + vec2 uv_offset + float opacity + float pad */
+    pc.size = 32u; /* vec2 uv_scale + vec2 uv_offset + opacity + dim + vignette + pad */
     memset(&pl, 0, sizeof pl);
     pl.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pl.pushConstantRangeCount = 1u;
@@ -513,6 +536,13 @@ static void destroy_bg(VkRenderer* r)
     if (r->bg_image) { vkDestroyImage(r->dev, r->bg_image, NULL); r->bg_image = VK_NULL_HANDLE; }
     if (r->bg_mem) { vkFreeMemory(r->dev, r->bg_mem, NULL); r->bg_mem = VK_NULL_HANDLE; }
     r->bg_w = 0u; r->bg_h = 0u;
+}
+
+void vk_render_set_background_style(VkRenderer* r, float dim, float vignette)
+{
+    if (!r) return;
+    r->bg_dim = dim < 0.0f ? 0.0f : (dim > 1.0f ? 1.0f : dim);
+    r->bg_vignette = vignette < 0.0f ? 0.0f : (vignette > 1.0f ? 1.0f : vignette);
 }
 
 bool vk_render_set_background(VkRenderer* r, const char* path, BackgroundFit fit)
@@ -808,7 +838,13 @@ static bool create_swapchain(VkRenderer* r)
     sc.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     sc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sc.preTransform = caps.currentTransform;
+    /* Wayland advertises PRE_MULTIPLIED; use it only when the window really is
+     * translucent, otherwise keep OPAQUE (some compositors are slower and X11
+     * may not support alpha at all). */
     sc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (r->window_opacity < 1.0f &&
+        (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR))
+        sc.compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
     sc.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     sc.clipped = VK_TRUE;
     VK_TRY(vkCreateSwapchainKHR(r->dev, &sc, NULL, &r->swapchain));
@@ -1001,6 +1037,11 @@ VkRenderer* vk_render_create(const VkRenderCreateInfo* info)
     r->extent.width = info->width ? info->width : 1280u;
     r->extent.height = info->height ? info->height : 800u;
     r->format = VK_FORMAT_B8G8R8A8_SRGB;
+    /* Below 0.2 the editor would be a barely visible ghost, so clamp there:
+     * the feature is for a translucent editor, not an invisible one. */
+    r->window_opacity = info->window_opacity > 0.0f ? info->window_opacity : 1.0f;
+    if (r->window_opacity < 0.2f) r->window_opacity = 0.2f;
+    if (r->window_opacity > 1.0f) r->window_opacity = 1.0f;
 
 #if defined(__linux__)
     filter_unneeded_vulkan_drivers();
@@ -1213,16 +1254,18 @@ static void write_vertices(FrameRes* f, const DrawList* dl)
         const SolidQuad* q = &dl->solids[i];
         SolidVert* v = sv + (size_t)i * 6u;
         float x0 = q->x, y0 = q->y, x1 = q->x + q->w, y1 = q->y + q->h;
-        v[0].pos[0] = x0; v[0].pos[1] = y0;
-        v[1].pos[0] = x1; v[1].pos[1] = y0;
-        v[2].pos[0] = x0; v[2].pos[1] = y1;
-        v[3].pos[0] = x1; v[3].pos[1] = y0;
-        v[4].pos[0] = x0; v[4].pos[1] = y1;
-        v[5].pos[0] = x1; v[5].pos[1] = y1;
+        v[0].pos[0] = x0; v[0].pos[1] = y0; v[0].uv[0] = 0.0f; v[0].uv[1] = 0.0f;
+        v[1].pos[0] = x1; v[1].pos[1] = y0; v[1].uv[0] = 1.0f; v[1].uv[1] = 0.0f;
+        v[2].pos[0] = x0; v[2].pos[1] = y1; v[2].uv[0] = 0.0f; v[2].uv[1] = 1.0f;
+        v[3].pos[0] = x1; v[3].pos[1] = y0; v[3].uv[0] = 1.0f; v[3].uv[1] = 0.0f;
+        v[4].pos[0] = x0; v[4].pos[1] = y1; v[4].uv[0] = 0.0f; v[4].uv[1] = 1.0f;
+        v[5].pos[0] = x1; v[5].pos[1] = y1; v[5].uv[0] = 1.0f; v[5].uv[1] = 1.0f;
         for (uint32_t k = 0u; k < 6u; ++k)
         {
             v[k].color[0] = q->r; v[k].color[1] = q->g;
             v[k].color[2] = q->b; v[k].color[3] = q->a;
+            v[k].size[0] = q->w; v[k].size[1] = q->h;
+            v[k].radius = q->radius; v[k].pad = 0.0f;
         }
     }
     for (i = 0u; f->vfx_buf && i < dl->nvfx; ++i)
@@ -1270,16 +1313,18 @@ static void write_vertices(FrameRes* f, const DrawList* dl)
         const SolidQuad* q = &dl->ov_solids[i];
         SolidVert* v = sv + (size_t)(dl->nsolids + i) * 6u;
         float x0 = q->x, y0 = q->y, x1 = q->x + q->w, y1 = q->y + q->h;
-        v[0].pos[0] = x0; v[0].pos[1] = y0;
-        v[1].pos[0] = x1; v[1].pos[1] = y0;
-        v[2].pos[0] = x0; v[2].pos[1] = y1;
-        v[3].pos[0] = x1; v[3].pos[1] = y0;
-        v[4].pos[0] = x0; v[4].pos[1] = y1;
-        v[5].pos[0] = x1; v[5].pos[1] = y1;
+        v[0].pos[0] = x0; v[0].pos[1] = y0; v[0].uv[0] = 0.0f; v[0].uv[1] = 0.0f;
+        v[1].pos[0] = x1; v[1].pos[1] = y0; v[1].uv[0] = 1.0f; v[1].uv[1] = 0.0f;
+        v[2].pos[0] = x0; v[2].pos[1] = y1; v[2].uv[0] = 0.0f; v[2].uv[1] = 1.0f;
+        v[3].pos[0] = x1; v[3].pos[1] = y0; v[3].uv[0] = 1.0f; v[3].uv[1] = 0.0f;
+        v[4].pos[0] = x0; v[4].pos[1] = y1; v[4].uv[0] = 0.0f; v[4].uv[1] = 1.0f;
+        v[5].pos[0] = x1; v[5].pos[1] = y1; v[5].uv[0] = 1.0f; v[5].uv[1] = 1.0f;
         for (uint32_t k = 0u; k < 6u; ++k)
         {
             v[k].color[0] = q->r; v[k].color[1] = q->g;
             v[k].color[2] = q->b; v[k].color[3] = q->a;
+            v[k].size[0] = q->w; v[k].size[1] = q->h;
+            v[k].radius = q->radius; v[k].pad = 0.0f;
         }
     }
     for (i = 0u; i < dl->nov_glyphs; ++i)
@@ -1503,8 +1548,10 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
     VkPresentInfoKHR pi;
     VkImageMemoryBarrier bar;
     VkBufferImageCopy copy;
-    struct { float screen[2]; float gamma; float contrast; } pc;
-    struct { float uv_scale[2]; float uv_offset[2]; float opacity; float pad; } bgpc;
+    struct { float screen[2]; float window; float pad; } spc;
+    struct { float screen[2]; float gamma; float contrast; float window; float pad; } gpc;
+    struct { float uv_scale[2]; float uv_offset[2]; float opacity;
+             float dim; float vignette; float window; } bgpc;
     float bg[4];
     VkFramebuffer fb;
     VkResult res;
@@ -1538,10 +1585,12 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
 
     quill_color_linear(QUILL_THEME.bg, bg);
     memset(&clear, 0, sizeof clear);
-    clear.color.float32[0] = bg[0];
-    clear.color.float32[1] = bg[1];
-    clear.color.float32[2] = bg[2];
-    clear.color.float32[3] = bg[3];
+    /* Premultiplied clear so a translucent window starts at exactly
+     * window_opacity; opaque windows get the same values as before. */
+    clear.color.float32[3] = bg[3] * r->window_opacity;
+    clear.color.float32[0] = bg[0] * clear.color.float32[3];
+    clear.color.float32[1] = bg[1] * clear.color.float32[3];
+    clear.color.float32[2] = bg[2] * clear.color.float32[3];
     fb = r->headless ? r->target_fb : r->fbs[image_index];
     memset(&rp, 0, sizeof rp);
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1559,10 +1608,16 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
     vkCmdSetViewport(f->cmd, 0u, 1u, &vp);
     vkCmdSetScissor(f->cmd, 0u, 1u, &sc);
 
-    pc.screen[0] = (float)r->extent.width;
-    pc.screen[1] = (float)r->extent.height;
-    pc.gamma = 1.0f;
-    pc.contrast = 0.0f;
+    spc.screen[0] = (float)r->extent.width;
+    spc.screen[1] = (float)r->extent.height;
+    spc.window = r->window_opacity;
+    spc.pad = 0.0f;
+    gpc.screen[0] = spc.screen[0];
+    gpc.screen[1] = spc.screen[1];
+    gpc.gamma = 1.0f;
+    gpc.contrast = 0.0f;
+    gpc.window = r->window_opacity;
+    gpc.pad = 0.0f;
 
     /* Optional background image, drawn fullscreen beneath the chrome. When
      * no image is loaded bg_pipe is NULL and this whole block is skipped. */
@@ -1590,9 +1645,11 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
         bgpc.uv_offset[0] = (1.0f - bgpc.uv_scale[0]) * 0.5f;
         bgpc.uv_offset[1] = (1.0f - bgpc.uv_scale[1]) * 0.5f;
         bgpc.opacity = 1.0f;
-        bgpc.pad = 0.0f;
+        bgpc.dim = r->bg_dim;
+        bgpc.vignette = r->bg_vignette;
+        bgpc.window = r->window_opacity;
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->bg_pipe);
-        vkCmdPushConstants(f->cmd, r->bg_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 24u, &bgpc);
+        vkCmdPushConstants(f->cmd, r->bg_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 32u, &bgpc);
         vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->bg_layout,
                                 0u, 1u, &r->bg_desc, 0u, NULL);
         vkCmdDraw(f->cmd, 3u, 1u, 0u, 0u);
@@ -1602,7 +1659,7 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
     {
         VkDeviceSize offset = 0u;
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->solid_pipe);
-        vkCmdPushConstants(f->cmd, r->solid_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 8u, &pc);
+        vkCmdPushConstants(f->cmd, r->solid_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 16u, &spc);
         vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->solid_buf, &offset);
         vkCmdDraw(f->cmd, dl->nsolids * 6u, 1u, 0u, 0u);
     }
@@ -1612,7 +1669,7 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->glyph_pipe);
         vkCmdPushConstants(f->cmd, r->glyph_layout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0u, 16u, &pc);
+                           0u, 24u, &gpc);
         vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->glyph_layout,
                                 0u, 1u, &r->desc, 0u, NULL);
         vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->glyph_buf, &offset);
@@ -1622,7 +1679,9 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
     {
         VkDeviceSize offset = 0u;
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->vfx_pipe);
-        vkCmdPushConstants(f->cmd, r->vfx_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 8u, &pc);
+        vkCmdPushConstants(f->cmd, r->vfx_layout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0u, 16u, &spc);
         vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->vfx_buf, &offset);
         vkCmdDraw(f->cmd, dl->nvfx * 6u, 1u, 0u, 0u);
     }
@@ -1634,7 +1693,7 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
     {
         VkDeviceSize off = (VkDeviceSize)dl->nsolids * 6u * sizeof(SolidVert);
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->solid_pipe);
-        vkCmdPushConstants(f->cmd, r->solid_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 8u, &pc);
+        vkCmdPushConstants(f->cmd, r->solid_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 16u, &spc);
         vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->solid_buf, &off);
         vkCmdDraw(f->cmd, dl->nov_solids * 6u, 1u, 0u, 0u);
     }
@@ -1644,7 +1703,7 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->glyph_pipe);
         vkCmdPushConstants(f->cmd, r->glyph_layout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0u, 16u, &pc);
+                           0u, 24u, &gpc);
         vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->glyph_layout,
                                 0u, 1u, &r->desc, 0u, NULL);
         vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->glyph_buf, &off);
@@ -1758,5 +1817,6 @@ bool vk_render_screenshot(VkRenderer* r, const char* path)
 }
 
 uint32_t vk_render_width(const VkRenderer* r) { return r->extent.width; }
+float vk_render_window_opacity(const VkRenderer* r) { return r ? r->window_opacity : 1.0f; }
 uint32_t vk_render_height(const VkRenderer* r) { return r->extent.height; }
 const char* vk_render_device_name(const VkRenderer* r) { return r->device_name; }

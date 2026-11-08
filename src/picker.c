@@ -615,8 +615,10 @@ void picker_render(const Picker* p, FontSystem* fs, DrawList* dl, uint32_t width
     x = ((float)width - w) * 0.5f;
     y = ((float)height - h) * 0.5f;
     frame_rect(dl, 0.0f, 0.0f, (float)width, (float)height, (float[4]){0.0f,0.0f,0.0f,0.45f});
-    frame_rect(dl, x, y, w, h, panel);
-    frame_rect(dl, x, y, w, 2.0f, accent);
+    frame_rect_rounded(dl, x, y, w, h, panel, 10.0f);
+    /* Inset accent rule so it follows the rounded top edge instead of
+     * sticking out past the corners. */
+    frame_rect_rounded(dl, x + 10.0f, y + 1.0f, w - 20.0f, 2.0f, accent, 1.0f);
     rowh = lh + 4.0f;
     snprintf(header, sizeof header, "%s  > %s", src_name(p->source), p->query);
     frame_text(fs, dl, header, (uint32_t)strlen(header), x + pad, y + pad + font_baseline(fs), fg, x + w - pad);
@@ -632,7 +634,7 @@ void picker_render(const Picker* p, FontSystem* fs, DrawList* dl, uint32_t width
     {
         float ry = y + pad + lh + 10.0f + (float)(i - start) * rowh;
         if (i == p->selected)
-            frame_rect(dl, x + pad * 0.5f, ry, list_w - pad, rowh, selbg);
+            frame_rect_rounded(dl, x + pad * 0.5f, ry, list_w - pad, rowh, selbg, 4.0f);
         frame_text(fs, dl, p->items[i].label, (uint32_t)strlen(p->items[i].label),
                    x + pad, ry + font_baseline(fs) + 2.0f,
                    i == p->selected ? accent : fg, x + list_w - pad);

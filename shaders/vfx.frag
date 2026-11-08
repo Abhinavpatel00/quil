@@ -1,4 +1,5 @@
 #version 450
+layout(push_constant) uniform Push { vec2 screen; float window; float pad; } pc;
 layout(location = 0) in vec4 v_color;
 layout(location = 1) in vec4 v_params;
 layout(location = 2) in vec2 v_size;
@@ -40,5 +41,7 @@ void main()
         d = rect_sdf(p, b);
         alpha = 1.0 - smoothstep(-aa, aa, d);
     }
-    out_color = vec4(v_color.rgb, v_color.a * alpha);
+    /* Premultiplied: blend state is ONE / ONE_MINUS_SRC_ALPHA. */
+    float a = v_color.a * alpha * pc.window;
+    out_color = vec4(v_color.rgb * a, a);
 }

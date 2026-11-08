@@ -1,5 +1,5 @@
 #version 450
-layout(push_constant) uniform PC { vec2 screen; float gamma; float contrast; } pc;
+layout(push_constant) uniform PC { vec2 screen; float gamma; float contrast; float window; float pad; } pc;
 layout(location = 0) in vec2 pos;
 layout(location = 1) in vec2 uv;
 layout(location = 2) in vec4 color;

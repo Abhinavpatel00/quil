@@ -12,6 +12,11 @@ typedef struct SolidQuad
 {
     float x, y, w, h;
     float r, g, b, a;
+    /* Corner radius in pixels. 0 keeps the quad pixel-exact (the original
+     * behaviour, still used for text highlights and the cursor); > 0 turns on
+     * the rounded-rect SDF with a one-pixel anti-aliased edge, used for
+     * floating panels. */
+    float radius;
 } SolidQuad;
 
 typedef struct VfxQuad
@@ -134,6 +139,10 @@ void frame_overlay_begin(DrawList* dl);
 void frame_overlay_end(DrawList* dl);
 
 void frame_rect(DrawList* dl, float x, float y, float w, float h, const float c[4]);
+/* Rounded variant for floating surfaces (panels, prompts). radius is clamped
+ * to half the smaller side; 0 is equivalent to frame_rect(). */
+void frame_rect_rounded(DrawList* dl, float x, float y, float w, float h,
+                        const float c[4], float radius);
 void frame_text(FontSystem* fs, DrawList* dl, const char* text, uint32_t len,
                 float x, float baseline_y, const float c[4], float clip_x1);
 

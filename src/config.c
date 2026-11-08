@@ -15,6 +15,7 @@ void config_defaults(MotionConfig* cfg)
     cfg->trail_size = 1.0f;
     cfg->smooth_blink = true;
     cfg->animate_insert = true;
+    cfg->indent_guides = true;
     cfg->vfx_modes = VFX_NONE;
     cfg->vfx_opacity = 200.0f;
     cfg->vfx_lifetime = 0.5f;
@@ -27,6 +28,9 @@ void config_defaults(MotionConfig* cfg)
     cfg->background_image[0] = 0;
     cfg->background_fit = BG_FIT_COVER;
     cfg->editor_opacity = 1.0f;
+    cfg->background_dim = 0.0f;
+    cfg->background_vignette = 0.0f;
+    cfg->window_opacity = 1.0f;
     cfg->theme[0] = 0;
     cfg->session_restore = true;
     snprintf(cfg->session_file, sizeof cfg->session_file, "%s", "~/.config/quill/session");
@@ -170,6 +174,7 @@ void config_load_file(MotionConfig* cfg, const char* path)
         else if (strcmp(k, "trail_size") == 0) cfg->trail_size = (float)strtod(v, NULL);
         else if (strcmp(k, "smooth_blink") == 0) cfg->smooth_blink = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
         else if (strcmp(k, "animate_insert") == 0) cfg->animate_insert = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
+        else if (strcmp(k, "indent_guides") == 0) cfg->indent_guides = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
         else if (strcmp(k, "cursor_vfx_mode") == 0 || strcmp(k, "vfx_mode") == 0) cfg->vfx_modes = vfx_parse_modes(v);
         else if (strcmp(k, "cursor_vfx_opacity") == 0 || strcmp(k, "vfx_opacity") == 0) cfg->vfx_opacity = (float)strtod(v, NULL);
         else if (strcmp(k, "cursor_vfx_particle_lifetime") == 0 || strcmp(k, "vfx_lifetime") == 0) cfg->vfx_lifetime = (float)strtod(v, NULL);
@@ -201,6 +206,12 @@ void config_load_file(MotionConfig* cfg, const char* path)
             cfg->editor_opacity = clamp01((float)strtod(v, NULL));
             opacity_seen = true;
         }
+        else if (strcmp(k, "background_dim") == 0)
+            cfg->background_dim = clamp01((float)strtod(v, NULL));
+        else if (strcmp(k, "background_vignette") == 0)
+            cfg->background_vignette = clamp01((float)strtod(v, NULL));
+        else if (strcmp(k, "window_opacity") == 0)
+            cfg->window_opacity = clamp01((float)strtod(v, NULL));
         else if (strcmp(k, "theme") == 0)
         {
             if (strcmp(v, "none") == 0 || strcmp(v, "default") == 0 || v[0] == 0) cfg->theme[0] = 0;

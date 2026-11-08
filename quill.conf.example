@@ -8,6 +8,7 @@ trail_size = 1.0          # 0 disables cursor trail, 1 is full trail
 blink_ms = 530            # half-period; 0 disables blinking
 smooth_blink = true       # cosine fade instead of hard on/off
 animate_insert = true     # animate cursor while in Insert mode
+indent_guides = true      # faint rules at each indent stop
 picker_ms = 120
 reduced_motion = false    # true disables scroll/cursor/blink animation
 
@@ -32,6 +33,15 @@ background_fit = cover            # cover | contain | stretch
 # 1.0 is fully opaque (the default, zero-cost path); lower it to reveal the
 # background image, e.g. 0.85.
 editor_opacity = 1.0              # 0.0 .. 1.0
+# Darken the wallpaper so text stays readable on busy photos. 0 leaves the
+# image untouched; 1 is black. The vignette darkens the edges on top of that.
+background_dim = 0.0              # 0.0 .. 1.0
+background_vignette = 0.0         # 0.0 .. 1.0
+
+# Whole-window opacity: 1 is an opaque window (the default). Below 1 blends
+# the editor with the desktop (needs compositor alpha support; Wayland has
+# it). Independent of editor_opacity, which only fades the chrome.
+window_opacity = 1.0              # 0.2 .. 1.0
 
 # Theme: a palette file that replaces the built-in Noir. See
 # themes/*.theme for the format and ready-made palettes (catppuccin,

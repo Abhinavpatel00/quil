@@ -6,8 +6,8 @@
 /* QUILL_THEME (the active palette) is defined in theme.c and can be replaced
  * at runtime by a theme file; the built-in default is Noir. */
 
-static void emit_solid(DrawList* dl, float x, float y, float w, float h,
-                       const float c[4])
+static void emit_solid_r(DrawList* dl, float x, float y, float w, float h,
+                         const float c[4], float radius)
 {
     SolidQuad* q;
     uint32_t*  n;
@@ -28,6 +28,13 @@ static void emit_solid(DrawList* dl, float x, float y, float w, float h,
     q = &arr[(*n)++];
     q->x = x; q->y = y; q->w = w; q->h = h;
     q->r = c[0]; q->g = c[1]; q->b = c[2]; q->a = c[3];
+    q->radius = radius > 0.0f ? radius : 0.0f;
+}
+
+static void emit_solid(DrawList* dl, float x, float y, float w, float h,
+                       const float c[4])
+{
+    emit_solid_r(dl, x, y, w, h, c, 0.0f);
 }
 
 static void emit_glyph(DrawList* dl, float x, float y, const AtlasEntry* e,
@@ -90,13 +97,26 @@ static void emit_shaped(DrawList* dl, FontSystem* fs, const ShapedGlyph* g,
     }
 }
 
+/* Pick whichever of two theme colours reads better on `bg`. Palettes are user
+ * supplied, so `accent` can legitimately sit close to `status_bg`; writing the
+ * mode label in status_bg unconditionally would make it vanish there. */
+static void text_on(const float bg[4], const float a[4], const float b[4], float out[4])
+{
+    float lb = 0.2126f * bg[0] + 0.7152f * bg[1] + 0.0722f * bg[2];
+    float la = 0.2126f * a[0] + 0.7152f * a[1] + 0.0722f * a[2];
+    float lc = 0.2126f * b[0] + 0.7152f * b[1] + 0.0722f * b[2];
+    const float* pick = quill_fabsf(la - lb) >= quill_fabsf(lc - lb) ? a : b;
+    out[0] = pick[0]; out[1] = pick[1]; out[2] = pick[2]; out[3] = pick[3];
+}
+
 void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
                  DrawList* dl, FrameScratch* scratch,
                  LineLayout* layouts, uint32_t* nlayouts)
 {
     float lin[16][4];
     float bg[4], fg[4], gut_bg[4], gut_fg[4], line_hl[4], sel[4], cur[4];
-    float st_bg[4], st_fg[4];
+    float st_bg[4], st_fg[4], accent[4], guide[4];
+    bool guides;
     float lh, base, adv, pad, gutter, text_x, status_h, text_h, op;
     uint32_t rows, i, digits, nlines, cursor_line, cursor_col;
     uint32_t nsp = 0u;
@@ -132,7 +152,13 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
     quill_color_linear(QUILL_THEME.cursor, cur);
     quill_color_linear(QUILL_THEME.status_bg, st_bg);
     quill_color_linear(QUILL_THEME.status_fg, st_fg);
-    (void)fg;
+    quill_color_linear(QUILL_THEME.accent, accent);
+    /* Indent guides are a hint, not a feature. The colour is the foreground
+     * scaled down in linear space, so the on-screen result is roughly a 15%
+     * grey on a dark theme: visible against the wallpaper, never competing
+     * with text. */
+    guide[0] = fg[0]; guide[1] = fg[1]; guide[2] = fg[2]; guide[3] = fg[3] * 0.045f;
+    guides = p->motion && p->motion->indent_guides;
 
     /* Editor opacity fades only the chrome (background, gutter, highlights,
      * selections, status bar) so text/cursor/VFX stay readable. The default
@@ -147,6 +173,8 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
         line_hl[3] *= op;
         sel[3] *= op;
         st_bg[3] *= op;
+        accent[3] *= op;
+        guide[3] *= op;
     }
 
     lh = font_line_height(fs);
@@ -243,13 +271,42 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
             ll->glyphs = g;
         }
 
+        /* Indent guides: one faint rule per indent stop, behind everything
+         * else on the line. Columns are expanded the same way the shaper does
+         * it (tabs advance to the next tab stop), so the rules line up with
+         * both space- and tab-indented code. */
+        if (guides && len > 0u)
+        {
+            uint32_t tw = p->tab_width ? p->tab_width : 1u;
+            uint32_t k2 = 0u, col = 0u, gc;
+            while (k2 < len)
+            {
+                unsigned char ch = scratch->line[k2];
+                if (ch == ' ') col++;
+                else if (ch == '\t')
+                    col = (col / tw + 1u) * tw;
+                else break;
+                k2++;
+            }
+            /* Draw at every stop up to and including the line's own indent:
+             * a 4-space block gets one rule under its first character, a
+             * nested 8-space block gets two. Stops strictly below the indent
+             * (the first version) meant ordinary 4-space code showed none. */
+            for (gc = tw; gc <= col; gc += tw)
+            {
+                float gx = quill_floorf(text_x + (float)gc * adv - p->scroll_x);
+                if (gx >= text_x && gx + 1.0f <= (float)p->width)
+                    emit_solid(dl, gx, y, 1.0f, lh, guide);
+            }
+        }
+
         /* Search matches behind selection. */
         if (p->search_query && p->search_query[0] && len > 0u)
         {
             SearchRange matches[64];
             uint32_t nm = quill_find_all(d, p->search_query, l.offset, l.offset + len, matches, 64u), mi;
             float match[4];
-            quill_color_linear(0xF9E2AF55u, match);
+            quill_color_linear(QUILL_THEME.search, match);
             match[3] *= op;
             for (mi = 0u; mi < nm; ++mi)
             {
@@ -480,15 +537,32 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
     if (p->vfx && p->motion)
         vfx_render(p->vfx, p->motion, dl, adv, lh);
 
-    /* Status bar. */
+    /* Status bar: an accent chip carrying the current mode, then the details.
+     * The chip is what makes INSERT/VISUAL obvious without reading the text,
+     * and it gives the palette's accent colour a real job (it used to be used
+     * only by the picker's top rule). */
     {
         float sy = (float)p->height - status_h;
+        const char* mode = p->modal ? modal_mode_name(p->modal) : "NORMAL";
+        uint32_t mlen = (uint32_t)strlen(mode);
         const ShapedGlyph* sg;
         uint32_t sn, j;
+        float chip_w, chip_fg[4];
         int len;
         emit_solid(dl, 0.0f, sy, (float)p->width, status_h, st_bg);
-        len = snprintf(scratch->status, sizeof scratch->status, "%s  %s%s  Ln %u, Col %u  %s  %u cursor%s",
-                       p->modal ? modal_mode_name(p->modal) : "NORMAL",
+        text_on(accent, st_bg, st_fg, chip_fg);
+        sn = font_shape_line(fs, (const uint8_t*)mode, mlen, p->tab_width, &sg);
+        chip_w = font_line_x_for_byte(sg, sn, UINT32_MAX) + 2.0f * pad;
+        emit_solid(dl, 0.0f, sy, chip_w, status_h, accent);
+        for (j = 0u; j < sn; ++j)
+        {
+            const AtlasEntry* e = font_atlas_get(fs, sg[j].face, sg[j].glyph, 0u);
+            if (!e || (e->w <= 1u && e->h <= 1u)) continue;
+            emit_glyph(dl, pad + sg[j].x_offset,
+                       sy + (status_h - lh) * 0.5f + base - (float)e->top - sg[j].y_offset,
+                       e, chip_fg, aw, ah);
+        }
+        len = snprintf(scratch->status, sizeof scratch->status, "  %s%s  Ln %u, Col %u  %s  %u cursor%s",
                        d->path[0] ? d->path : "[No Name]", d->dirty ? " *" : "",
                        cursor_line + 1u, cursor_col + 1u, syntax_name(d->syntax),
                        ss->count, ss->count == 1u ? "" : "s");
@@ -501,7 +575,7 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
         {
             const AtlasEntry* e = font_atlas_get(fs, sg[j].face, sg[j].glyph, 0u);
             if (!e || (e->w <= 1u && e->h <= 1u)) continue;
-            emit_glyph(dl, pad + sg[j].x_offset,
+            emit_glyph(dl, chip_w + pad + sg[j].x_offset,
                        sy + (status_h - lh) * 0.5f + base - (float)e->top - sg[j].y_offset,
                        e, st_fg, aw, ah);
         }
@@ -548,6 +622,12 @@ void frame_overlay_end(DrawList* dl)
 void frame_rect(DrawList* dl, float x, float y, float w, float h, const float c[4])
 {
     emit_solid(dl, x, y, w, h, c);
+}
+
+void frame_rect_rounded(DrawList* dl, float x, float y, float w, float h,
+                        const float c[4], float radius)
+{
+    emit_solid_r(dl, x, y, w, h, c, radius);
 }
 
 void frame_text(FontSystem* fs, DrawList* dl, const char* text, uint32_t len,

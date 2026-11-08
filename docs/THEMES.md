@@ -40,16 +40,17 @@ string  = #A6E3A1
 
 ### Keys
 
-Chrome: `bg`, `fg`, `gutter_bg`, `gutter_fg`, `line_hl`, `selection`, `cursor`,
-`status_bg`, `status_fg`, `accent`.
+Chrome: `bg`, `fg`, `gutter_bg`, `gutter_fg`, `line_hl`, `selection`, `search`,
+`cursor`, `status_bg`, `status_fg`, `accent`.
 
 Syntax (Tree-sitter capture classes): `default`, `keyword`, `function`, `string`,
 `comment`, `number`, `type`, `variable`, `operator`, `punctuation`, `property`,
 `constant`, `attribute`, `label`, `escape`, `error`.
 
-`line_hl` and `selection` are where alpha matters most (they are translucent
-highlights). `status_bg` also backs the picker panel and search prompt; `accent`
-is the picker/search accent; `cursor` is the base color for the cursor, trail,
+`line_hl`, `selection` and `search` are where alpha matters most (they are
+translucent highlights; `search` backs search matches). `status_bg` also backs
+the picker panel and search prompt; `accent` fills the status-bar mode chip and
+the picker accent; `cursor` is the base color for the cursor, trail,
 and VFX.
 
 ## Ways to configure

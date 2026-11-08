@@ -76,12 +76,27 @@ int main(void)
     assert(dl->solids[0].a == 0.0f);
     cfg.editor_opacity = 1.0f;
 
+    /* Rounded panel quads keep their radius; plain rects stay pixel-exact so
+     * selections and the cursor keep their sharp edges. */
+    {
+        float c[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        uint32_t before = dl->nsolids;
+        frame_rect(dl, 0.0f, 0.0f, 10.0f, 10.0f, c);
+        frame_rect_rounded(dl, 0.0f, 0.0f, 10.0f, 10.0f, c, 6.0f);
+        assert(dl->nsolids == before + 2u);
+        assert(dl->solids[before].radius == 0.0f);
+        assert(dl->solids[before + 1u].radius == 6.0f);
+    }
+
     /* Background image: load, render, disable, and reject a bad path. */
     write_test_png("build/test_bg.png");
     memset(&ci, 0, sizeof ci);
     ci.headless = true; ci.width = 320u; ci.height = 240u; ci.validation = true;
+    /* 0 means "unset" and must keep the opaque default. */
+    assert(ci.window_opacity == 0.0f);
     vk = vk_render_create(&ci);
     assert(vk);
+    assert(vk_render_window_opacity(vk) == 1.0f);
     assert(vk_render_set_background(vk, "build/test_bg.png", BG_FIT_COVER));
     p.width = 320u; p.height = 240u;
     frame_build(&d, fs, &p, dl, scratch, layouts, &nlayouts);
@@ -92,6 +107,24 @@ int main(void)
     assert(!vk_render_set_background(vk, "build/does_not_exist.png", BG_FIT_COVER));
     assert(vk_render_frame(vk, dl, fs));                        /* still renders */
     vk_render_destroy(vk);
+
+    /* Window opacity is clamped to a usable range; 0.1 would make the editor
+     * nearly invisible, and unset (0) means opaque. */
+    {
+        VkRenderCreateInfo wi;
+        memset(&wi, 0, sizeof wi);
+        wi.headless = true; wi.width = 64u; wi.height = 64u;
+        wi.window_opacity = 0.1f;
+        vk = vk_render_create(&wi);
+        assert(vk);
+        assert(vk_render_window_opacity(vk) > 0.19f && vk_render_window_opacity(vk) < 0.21f);
+        vk_render_destroy(vk);
+        wi.window_opacity = 3.0f;
+        vk = vk_render_create(&wi);
+        assert(vk);
+        assert(vk_render_window_opacity(vk) == 1.0f);
+        vk_render_destroy(vk);
+    }
 
     MU_FREE(dl); MU_FREE(scratch); font_destroy(fs); doc_destroy(&d);
     puts("test_appearance: PASS");

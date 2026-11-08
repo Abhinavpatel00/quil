@@ -826,9 +826,9 @@ static void render_search_prompt(App* a)
     quill_color_linear(QUILL_THEME.fg, fg);
     quill_color_linear(QUILL_THEME.accent, accent);
     bg[3] = 0.95f * a->cfg.editor_opacity;
-    frame_rect(a->dl, 0.0f, y, (float)a->params.width, lh + 16.0f, bg);
+    frame_rect_rounded(a->dl, 8.0f, y, (float)a->params.width - 16.0f, lh + 16.0f, bg, 8.0f);
     snprintf(prompt, sizeof prompt, "%s%s", a->search_dir > 0 ? "/" : "?", a->search_query);
-    frame_text(a->fs, a->dl, prompt, (uint32_t)strlen(prompt), 8.0f, y + 8.0f + font_baseline(a->fs), accent, (float)a->params.width - 8.0f);
+    frame_text(a->fs, a->dl, prompt, (uint32_t)strlen(prompt), 16.0f, y + 8.0f + font_baseline(a->fs), accent, (float)a->params.width - 16.0f);
     (void)fg;
 }
 
@@ -1075,6 +1075,7 @@ static int run_headless(int argc, char** argv)
     ci.width = width;
     ci.height = height;
     ci.validation = validation;
+    ci.window_opacity = a.cfg.window_opacity;
     a.vk = vk_render_create(&ci);
     if (!a.vk || !a.dl || !a.scratch)
     {
@@ -1086,6 +1087,7 @@ static int run_headless(int argc, char** argv)
     }
     if (a.cfg.background_image[0])
         vk_render_set_background(a.vk, a.cfg.background_image, a.cfg.background_fit);
+    vk_render_set_background_style(a.vk, a.cfg.background_dim, a.cfg.background_vignette);
     a.params.width = width;
     a.params.height = height;
     a.params.tab_width = QUILL_TAB_WIDTH;
@@ -1218,6 +1220,11 @@ int main(int argc, char** argv)
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
+    /* Without this hint GLFW marks the Wayland surface opaque and the
+     * compositor ignores the alpha channel, so window_opacity would do
+     * nothing. Opaque windows keep the default (cheaper) surface. */
+    if (a.cfg.window_opacity < 0.999f)
+        glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
     a.window = glfwCreateWindow(1280, 800, "Quill", NULL, NULL);
     if (!a.window) {
         const char* desc = NULL;
@@ -1244,6 +1251,7 @@ int main(int argc, char** argv)
     ci.width = (uint32_t)fbw;
     ci.height = (uint32_t)fbh;
     ci.validation = getenv("QUILL_VK_VALIDATION") != NULL;
+    ci.window_opacity = a.cfg.window_opacity;
     a.vk = vk_render_create(&ci);
     if (!a.fs || !a.dl || !a.scratch || !a.vk)
     {
@@ -1252,6 +1260,7 @@ int main(int argc, char** argv)
     }
     if (a.cfg.background_image[0])
         vk_render_set_background(a.vk, a.cfg.background_image, a.cfg.background_fit);
+    vk_render_set_background_style(a.vk, a.cfg.background_dim, a.cfg.background_vignette);
     a.params.width = (uint32_t)fbw;
     a.params.height = (uint32_t)fbh;
     a.params.tab_width = QUILL_TAB_WIDTH;
