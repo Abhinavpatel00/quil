@@ -2,6 +2,12 @@
 
 #define VFX_PI 3.14159265358979323846f
 #define MU_TWO_PI   6.28318530717958647692f
+
+/* Simulation limits.  Frames are integrated in sub-steps no longer than
+ * 1/120 s, matching Neovide's animation step cap: a variable per-frame step
+ * makes particle motion depend on frame pacing and reads as jitter. */
+#define VFX_MAX_DT   0.1f
+#define VFX_STEP_DT  (1.0f / 120.0f)
 #define MU_HALF_PI  1.57079632679489661923f
 #define MU_INV_TWO_PI 0.15915494309189533577f
 
@@ -163,6 +169,8 @@ void vfx_reset(VfxState* v)
     for (i = 0u; i < VFX_HL_COUNT; ++i)
         v->hl[i].active = false;
     v->dest_valid = false;
+    v->move_hint_valid = false;
+    v->cursor_moved = false;
 }
 
 static void pool_push(VfxPool* p, float x, float y, float vx, float vy,
@@ -382,11 +390,24 @@ static void update_rotate(VfxPool* p, float dt)
     });
 }
 
+/* Damping used to be a per-frame multiplier (0.98, 0.90, ...), which makes a
+ * particle's trajectory depend on the frame rate: at 144 Hz it slowed down
+ * 2.4x faster than at 60 Hz, so the same trail moved at a different speed
+ * whenever the compositor changed pace.  These are the same rates expressed
+ * per second and applied exponentially, so the motion is identical for any dt
+ * (and is exact under the sub-stepping above). */
+#define VFX_DAMP_COMET    1.212f  /* 0.98 per 1/60 s */
+#define VFX_DAMP_GLITCH   6.324f  /* 0.90 per 1/60 s */
+#define VFX_DAMP_AURORA   0.603f  /* 0.99 per 1/60 s */
+#define VFX_DAMP_SPARK    2.449f  /* 0.96 per 1/60 s */
+#define VFX_DAMP_SMOKE    1.212f  /* 0.98 per 1/60 s */
+
 static void update_comet(VfxPool* p, float dt)
 {
+    float d = quill_exp_neg(VFX_DAMP_COMET * dt);
     INTEGRATE({
-        p->vx[i] *= 0.98f;
-        p->vy[i] *= 0.98f;
+        p->vx[i] *= d;
+        p->vy[i] *= d;
     });
 }
 
@@ -400,17 +421,19 @@ static void update_ember(VfxPool* p, float dt)
 
 static void update_aurora(VfxPool* p, float dt)
 {
+    float d = quill_exp_neg(VFX_DAMP_AURORA * dt);
     INTEGRATE({
         p->vx[i] += mu_sinf(p->life[i] * p->rot[i]) * 24.0f * dt;
-        p->vy[i] *= 0.99f;
+        p->vy[i] *= d;
     });
 }
 
 static void update_glitch(VfxPool* p, float dt)
 {
+    float d = quill_exp_neg(VFX_DAMP_GLITCH * dt);
     INTEGRATE({
         p->x[i] += mu_sinf(p->life[i] * 80.0f) * 12.0f * dt;
-        p->vx[i] *= 0.90f;
+        p->vx[i] *= d;
     });
 }
 
@@ -431,16 +454,18 @@ static void update_confetti(VfxPool* p, float dt)
 
 static void update_spark(VfxPool* p, float dt)
 {
+    float d = quill_exp_neg(VFX_DAMP_SPARK * dt);
     INTEGRATE({
         p->vy[i] += 80.0f * dt;
-        p->vx[i] *= 0.96f;
+        p->vx[i] *= d;
     });
 }
 
 static void update_smoke(VfxPool* p, float dt)
 {
+    float d = quill_exp_neg(VFX_DAMP_SMOKE * dt);
     INTEGRATE({
-        p->vy[i] *= 0.98f;
+        p->vy[i] *= d;
         p->vx[i] += mu_sinf(p->life[i] + p->rot[i]) * 4.0f * dt;
     });
 }
@@ -507,37 +532,85 @@ static void pool_update(VfxPool* p, uint32_t mode, const MotionConfig* cfg,
     p->prev_y = dest_y;
 }
 
+/* Tell the VFX system whether the logical cursor target moved this frame.
+ * Called by the frame builder; without it, highlights treat any pixel change
+ * (including the continuous destination change caused by smooth scrolling)
+ * as a cursor move and restart every frame, so they pulse in place instead of
+ * expanding. */
+void vfx_notify_cursor(VfxState* v, bool moved)
+{
+    if (!v) return;
+    v->move_hint_valid = true;
+    v->cursor_moved = moved;
+}
+
 bool vfx_update(VfxState* v, const MotionConfig* cfg, float dt,
                 float dest_x, float dest_y, float w, float h,
                 bool immediate, const float base_lin[4])
 {
-    uint32_t i;
-    bool changed;
+    uint32_t i, s, steps;
+    float total, step;
+    bool moved;
     if (!v || !cfg || cfg->vfx_modes == VFX_NONE || cfg->reduced_motion)
         return false;
-    changed = !v->dest_valid || quill_fabsf(dest_x - v->dest_x) > 0.5f || quill_fabsf(dest_y - v->dest_y) > 0.5f;
+
+    total = dt;
+    if (total < 0.0f) total = 0.0f;
+    /* Never integrate a whole idle period in one step; the spawn distance is
+     * derived from the destination delta, so a genuine long jump still draws
+     * its full streak. */
+    if (total > VFX_MAX_DT) total = VFX_MAX_DT;
+
+    if (v->move_hint_valid)
+        moved = v->cursor_moved;
+    else
+        moved = !v->dest_valid ||
+                quill_fabsf(dest_x - v->dest_x) > 0.5f ||
+                quill_fabsf(dest_y - v->dest_y) > 0.5f;
+
+    /* Fixed sub-steps with the cursor destination interpolated across the
+     * frame.  Neovide caps its animation step at 1/120 s for the same reason:
+     * integrating once per presented frame ties particle speed to frame
+     * pacing, which shows up as shimmer when a frame arrives early or late. */
+    steps = total > 0.0f ? (uint32_t)(total / VFX_STEP_DT + 0.9999f) : 0u;
+    if (steps == 0u && total > 0.0f) steps = 1u;
+    step = steps ? total / (float)steps : 0.0f;
+
+    if (steps > 0u)
+    {
+        float ox = v->dest_valid ? v->dest_x : dest_x;
+        float oy = v->dest_valid ? v->dest_y : dest_y;
+        for (s = 1u; s <= steps; ++s)
+        {
+            float f = (float)s / (float)steps;
+            float ix = ox + (dest_x - ox) * f;
+            float iy = oy + (dest_y - oy) * f;
+            for (i = 0u; i < VFX_TRAIL_COUNT; ++i)
+            {
+                if ((cfg->vfx_modes & TRAIL_BITS[i]) == 0u) continue;
+                pool_update(&v->trail[i], i, cfg, step, ix, iy, h, immediate, base_lin);
+            }
+        }
+    }
+
     for (i = 0u; i < VFX_HL_COUNT; ++i)
     {
         if ((cfg->vfx_modes & HL_BITS[i]) == 0u) continue;
-        if (changed)
+        if (moved)
         {
-            v->hl[i].cx = dest_x + w * 0.5f;
-            v->hl[i].cy = dest_y + h * 0.5f;
             v->hl[i].t = 0.0f;
             v->hl[i].active = true;
         }
         if (v->hl[i].active)
         {
             float life = cfg->vfx_highlight_lifetime > 0.0f ? cfg->vfx_highlight_lifetime : cfg->vfx_lifetime;
-            v->hl[i].t += dt / life;
+            v->hl[i].cx = dest_x + w * 0.5f;
+            v->hl[i].cy = dest_y + h * 0.5f;
+            v->hl[i].t += life > 0.0f ? total / life : 1.0f;
             if (v->hl[i].t >= 1.0f) v->hl[i].active = false;
         }
     }
-    for (i = 0u; i < VFX_TRAIL_COUNT; ++i)
-    {
-        if ((cfg->vfx_modes & TRAIL_BITS[i]) == 0u) continue;
-        pool_update(&v->trail[i], i, cfg, dt, dest_x, dest_y, h, immediate, base_lin);
-    }
+
     v->dest_x = dest_x;
     v->dest_y = dest_y;
     v->dest_valid = true;
@@ -592,7 +665,15 @@ void vfx_render(const VfxState* v, const MotionConfig* cfg, DrawList* dl,
         case 10: shape = 0.0f; stroke = 0.0f; base_size = font_w * 0.50f; break; /* smoke */
         default: shape = 3.0f; stroke = 0.0f; base_size = font_w * 0.5f; break;
         }
-        for (i = 0u; i < p->count; ++i)
+        /* Budget check per mode: if the frame cannot hold a whole mode's
+         * particles, draw a proportional subset rather than filling the list
+         * and starving every later mode. Without this, enabling several modes
+         * at once made the trailing modes disappear entirely. */
+        {
+            uint32_t room = dl->nvfx < QUILL_MAX_VFX ? QUILL_MAX_VFX - dl->nvfx : 0u;
+            uint32_t draw = p->count < room ? p->count : room;
+            uint32_t stride = (draw > 0u && draw < p->count) ? (p->count + draw - 1u) / draw : 1u;
+            for (i = 0u; i < p->count; i += stride)
         {
             float ratio = cfg->vfx_lifetime > 0.0f ? p->life[i] / cfg->vfx_lifetime : 0.0f;
             float size = base_size * (m == 2u ? 1.0f : ratio) * p->size[i];
@@ -605,6 +686,7 @@ void vfx_render(const VfxState* v, const MotionConfig* cfg, DrawList* dl,
             if (m == 10u) { size = base_size * (1.0f + (1.0f - ratio) * 1.6f) * p->size[i]; w = size; h = size; alpha = ratio * opacity * 0.35f; }
             emit_vfx(dl, p->x[i] - w * 0.5f, p->y[i] - h * 0.5f, w, h,
                      p->cr[i], p->cg[i], p->cb[i], alpha, shape, stroke);
+        }
         }
     }
 

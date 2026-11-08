@@ -19,7 +19,10 @@ int main(void)
     uint32_t      n;
     char          abs1[PATH_MAX];
     FILE*         f;
-    const char*   SESS = "build/test_session";
+    /* Not "build/test_session": that is the test binary's own path now that
+     * test executables live under build/, and overwriting a running binary
+     * fails with ETXTBSY. */
+    const char*   SESS = "build/test_session.state";
     const char*   F1 = "build/test_sess_a.c";
     const char*   F2 = "build/test_sess_b.c";
 

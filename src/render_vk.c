@@ -1262,6 +1262,44 @@ static void write_vertices(FrameRes* f, const DrawList* dl)
             v[k].color[2] = q->b; v[k].color[3] = q->a;
         }
     }
+    /* Overlay layer: appended after the base layer in BOTH buffers so the
+     * overlay's solids and glyphs are drawn in a later batch and composite on
+     * top of every base-layer primitive. */
+    for (i = 0u; i < dl->nov_solids; ++i)
+    {
+        const SolidQuad* q = &dl->ov_solids[i];
+        SolidVert* v = sv + (size_t)(dl->nsolids + i) * 6u;
+        float x0 = q->x, y0 = q->y, x1 = q->x + q->w, y1 = q->y + q->h;
+        v[0].pos[0] = x0; v[0].pos[1] = y0;
+        v[1].pos[0] = x1; v[1].pos[1] = y0;
+        v[2].pos[0] = x0; v[2].pos[1] = y1;
+        v[3].pos[0] = x1; v[3].pos[1] = y0;
+        v[4].pos[0] = x0; v[4].pos[1] = y1;
+        v[5].pos[0] = x1; v[5].pos[1] = y1;
+        for (uint32_t k = 0u; k < 6u; ++k)
+        {
+            v[k].color[0] = q->r; v[k].color[1] = q->g;
+            v[k].color[2] = q->b; v[k].color[3] = q->a;
+        }
+    }
+    for (i = 0u; i < dl->nov_glyphs; ++i)
+    {
+        const GlyphQuad* q = &dl->ov_glyphs[i];
+        GlyphVert* v = gv + (size_t)(dl->nglyphs + i) * 6u;
+        float x0 = q->x, y0 = q->y, x1 = q->x + q->w, y1 = q->y + q->h;
+        v[0].pos[0] = x0; v[0].pos[1] = y0; v[0].uv[0] = q->u0; v[0].uv[1] = q->v0;
+        v[1].pos[0] = x1; v[1].pos[1] = y0; v[1].uv[0] = q->u1; v[1].uv[1] = q->v0;
+        v[2].pos[0] = x0; v[2].pos[1] = y1; v[2].uv[0] = q->u0; v[2].uv[1] = q->v1;
+        v[3].pos[0] = x1; v[3].pos[1] = y0; v[3].uv[0] = q->u1; v[3].uv[1] = q->v0;
+        v[4].pos[0] = x0; v[4].pos[1] = y1; v[4].uv[0] = q->u0; v[4].uv[1] = q->v1;
+        v[5].pos[0] = x1; v[5].pos[1] = y1; v[5].uv[0] = q->u1; v[5].uv[1] = q->v1;
+        for (uint32_t k = 0u; k < 6u; ++k)
+        {
+            v[k].color[0] = q->r; v[k].color[1] = q->g;
+            v[k].color[2] = q->b; v[k].color[3] = q->a;
+        }
+    }
+
 }
 
 static bool ensure_atlas_image(VkRenderer* r, FontSystem* fs)
@@ -1587,6 +1625,30 @@ bool vk_render_frame(VkRenderer* r, const DrawList* dl, FontSystem* fs)
         vkCmdPushConstants(f->cmd, r->vfx_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 8u, &pc);
         vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->vfx_buf, &offset);
         vkCmdDraw(f->cmd, dl->nvfx * 6u, 1u, 0u, 0u);
+    }
+    /* Overlay pass: its vertices live after the base layer in the same two
+     * rings, so draw them as a separate batch with a first-vertex offset. This
+     * is what keeps the picker/search panel above the editor text instead of
+     * underneath it. */
+    if (dl->nov_solids)
+    {
+        VkDeviceSize off = (VkDeviceSize)dl->nsolids * 6u * sizeof(SolidVert);
+        vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->solid_pipe);
+        vkCmdPushConstants(f->cmd, r->solid_layout, VK_SHADER_STAGE_VERTEX_BIT, 0u, 8u, &pc);
+        vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->solid_buf, &off);
+        vkCmdDraw(f->cmd, dl->nov_solids * 6u, 1u, 0u, 0u);
+    }
+    if (dl->nov_glyphs)
+    {
+        VkDeviceSize off = (VkDeviceSize)dl->nglyphs * 6u * sizeof(GlyphVert);
+        vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->glyph_pipe);
+        vkCmdPushConstants(f->cmd, r->glyph_layout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0u, 16u, &pc);
+        vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->glyph_layout,
+                                0u, 1u, &r->desc, 0u, NULL);
+        vkCmdBindVertexBuffers(f->cmd, 0u, 1u, &f->glyph_buf, &off);
+        vkCmdDraw(f->cmd, dl->nov_glyphs * 6u, 1u, 0u, 0u);
     }
     vkCmdEndRenderPass(f->cmd);
 

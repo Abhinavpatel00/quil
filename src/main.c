@@ -43,7 +43,7 @@ typedef struct App
     float         view_top;
     float         target_top;
     float         scroll_vel;
-    uint64_t      last_frame_ms;
+    uint64_t      last_frame_ns;
     bool          animating;
     bool          blink_active;
     CursorAnim    cursor_anim[QUILL_MAX_CURSORS];
@@ -731,6 +731,24 @@ static void mouse_callback(GLFWwindow* w, int button, int action, int mods)
     bool shift = (mods & GLFW_MOD_SHIFT) != 0;
     if (button != GLFW_MOUSE_BUTTON_LEFT) return;
     glfwGetCursorPos(w, &x, &y);
+    /* Picker: click an item to select and close. */
+    if (a->picker && a->picker->open)
+    {
+        int hit = picker_hit_test(a->picker, a->params.width, a->params.height,
+                                  font_line_height(a->fs), (float)x, (float)y);
+        if (action == GLFW_PRESS && hit >= 0)
+        {
+            bool was = a->picker->open;
+            a->picker->selected = (uint32_t)hit;
+            a->picker->result = a->picker->items[hit];
+            a->picker->accepted = true;
+            a->picker->open = false;
+            if (was && !a->picker->open && a->picker->accepted)
+                accept_picker(a);
+            a->redraw = true;
+        }
+        return;
+    }
     off = frame_hit_test(&a->params, a->layouts, a->nlayouts,
                          font_line_height(a->fs), gutter_width(a),
                          (float)x, (float)y + a->params.scroll_y_offset, a->doc);
@@ -817,8 +835,14 @@ static void render_search_prompt(App* a)
 static void render_app(App* a)
 {
     uint64_t now = app_now_ms();
+    uint64_t now_ns = mu_time_now();
     float lh = font_line_height(a->fs);
-    float dt = a->last_frame_ms ? (float)(now - a->last_frame_ms) * 0.001f : 0.016f;
+    /* Nanosecond frame delta.  The old millisecond clock quantised every
+     * frame to 1 ms (16 or 17 ms at 60 Hz), which is enough to make particle
+     * speeds visibly uneven at high refresh rates. */
+    float dt = a->last_frame_ns ? (float)((double)(now_ns - a->last_frame_ns) * 1e-9) : 0.016f;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 0.25f) dt = 0.25f;
     bool scroll_active = false;
     if (a->term_active && a->term)
     {
@@ -827,6 +851,9 @@ static void render_app(App* a)
         a->dl->nsolids = 0u;
         a->dl->nglyphs = 0u;
         a->dl->nvfx = 0u;
+        a->dl->nov_solids = 0u;
+        a->dl->nov_glyphs = 0u;
+        a->dl->in_overlay = false;
         a->dl->overflow = 0u;
         a->animating = false;
         a->blink_active = false;
@@ -835,11 +862,11 @@ static void render_app(App* a)
         if (a->picker && a->picker->open)
             picker_render(a->picker, a->fs, a->dl, a->params.width, a->params.height, a->cfg.editor_opacity);
         vk_render_frame(a->vk, a->dl, a->fs);
-        a->last_frame_ms = now;
+        a->last_frame_ns = now_ns;
         return;
     }
     clamp_scroll(a);
-    a->last_frame_ms = now;
+    a->last_frame_ns = now_ns;
     if (dt < 0.0f) dt = 0.0f;
     if (a->cfg.scroll_ms == 0u || a->cfg.reduced_motion || a->cfg.style == MOTION_INSTANT)
     {
@@ -871,6 +898,7 @@ static void render_app(App* a)
     a->params.modal = &a->modal;
     a->params.search_query = a->modal.search[0] ? a->modal.search : NULL;
     a->params.now_ms = now;
+    a->params.dt = dt;
     a->params.cursor_ms = a->cfg.reduced_motion ? 0u : a->cfg.cursor_ms;
     a->params.motion = &a->cfg;
     a->params.cursor_anim = a->cursor_anim;
@@ -896,10 +924,18 @@ static void render_app(App* a)
         a->params.blink_alpha = 1.0f;
 
     frame_build(a->doc, a->fs, &a->params, a->dl, a->scratch, a->layouts, &a->nlayouts);
-    if (a->picker && a->picker->open)
-        picker_render(a->picker, a->fs, a->dl, a->params.width, a->params.height, a->cfg.editor_opacity);
-    if (a->search_open)
-        render_search_prompt(a);
+    /* The renderer batches by primitive type, so an overlay appended to the
+     * same list would have its panel drawn under the editor glyphs. Start a new
+     * layer for anything that must appear above the editor. */
+    if ((a->picker && a->picker->open) || a->search_open)
+    {
+        frame_overlay_begin(a->dl);
+        if (a->picker && a->picker->open)
+            picker_render(a->picker, a->fs, a->dl, a->params.width, a->params.height, a->cfg.editor_opacity);
+        if (a->search_open)
+            render_search_prompt(a);
+        frame_overlay_end(a->dl);
+    }
     vk_render_frame(a->vk, a->dl, a->fs);
     a->animating = a->animating || scroll_active;
 }
@@ -944,12 +980,14 @@ static bool app_init_doc(App* a, const char* file)
     a->params.scroll_x = a->doc->scroll_x;
     modal_init(&a->modal);
     a->modal.window = a->window;
+    a->modal.auto_save_on_mode_change = a->cfg.auto_save_on_mode_change;
     return true;
 }
 
 static int run_headless(int argc, char** argv)
 {
     App a;
+    const char* cfgpath = NULL;
     const char* file = NULL;
     const char* shot = "quill.png";
     const char* vfx = NULL;
@@ -967,7 +1005,8 @@ static int run_headless(int argc, char** argv)
     vfx_init(&a.vfx);
     for (i = 1; i < argc; ++i)
     {
-        if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) shot = argv[++i];
+        if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) cfgpath = argv[++i];
+        else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) shot = argv[++i];
         else if (strcmp(argv[i], "--width") == 0 && i + 1 < argc) width = (uint32_t)atoi(argv[++i]);
         else if (strcmp(argv[i], "--height") == 0 && i + 1 < argc) height = (uint32_t)atoi(argv[++i]);
         else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) size = (uint32_t)atoi(argv[++i]);
@@ -982,11 +1021,24 @@ static int run_headless(int argc, char** argv)
         else if (strcmp(argv[i], "--theme") == 0 && i + 1 < argc) theme = argv[++i];
         else if (argv[i][0] != '-') file = argv[i];
     }
-    config_defaults(&a.cfg);
+    /* Headless used to ignore --config entirely, so a config-driven background
+     * or theme silently did nothing in screenshots. Load it, then let the CLI
+     * flags below override individual keys. */
+    config_load_file(&a.cfg, cfgpath ? cfgpath : "quill.conf");
     a.cfg.session_restore = false; /* headless screenshots are deterministic */
     if (vfx) a.cfg.vfx_modes = vfx_parse_modes(vfx);
     if (vfx_demo && a.cfg.vfx_modes == VFX_NONE) a.cfg.vfx_modes = VFX_RAILGUN | VFX_RIPPLE;
-    if (bg) snprintf(a.cfg.background_image, sizeof a.cfg.background_image, "%s", bg);
+    /* CLI paths get the same ~ expansion as config paths; relative ones are
+     * taken from the current directory, which is what a shell would do. */
+    if (bg)
+    {
+        if (!config_resolve_path(bg, NULL, a.cfg.background_image,
+                                 sizeof a.cfg.background_image))
+        {
+            a.cfg.background_image[0] = 0;
+            fprintf(stderr, "background: cannot find '%s'\n", bg);
+        }
+    }
     if (bg_fit)
     {
         if (strcmp(bg_fit, "contain") == 0) a.cfg.background_fit = BG_FIT_CONTAIN;
@@ -1000,7 +1052,19 @@ static int run_headless(int argc, char** argv)
         if (op > 1.0f) op = 1.0f;
         a.cfg.editor_opacity = op;
     }
-    theme_load_file(theme);
+    if (theme)
+    {
+        char tpath[512];
+        if (config_resolve_path(theme, NULL, tpath, sizeof tpath))
+            theme_load_file(tpath);
+        else
+            fprintf(stderr, "theme: cannot find '%s'\n", theme);
+    }
+    else theme_load_file(NULL);
+    /* Same rule as the config path: a background with a fully opaque editor is
+     * invisible, so reveal it unless --editor-opacity was given. */
+    if (a.cfg.background_image[0] && !opacity && a.cfg.editor_opacity >= 1.0f)
+        a.cfg.editor_opacity = 0.85f;
     if (!app_init_doc(&a, file)) return 1;
     a.fs = font_create(size, scale);
     if (!a.fs) { bm_destroy(&a.bm); return 1; }
@@ -1103,7 +1167,13 @@ int main(int argc, char** argv)
     vfx_init(&a.vfx);
     config_load_file(&a.cfg, cfgpath ? cfgpath : "quill.conf");
     if (vfx_cli) a.cfg.vfx_modes = vfx_parse_modes(vfx_cli);
-    if (bg_cli) snprintf(a.cfg.background_image, sizeof a.cfg.background_image, "%s", bg_cli);
+    if (bg_cli &&
+        !config_resolve_path(bg_cli, NULL, a.cfg.background_image,
+                             sizeof a.cfg.background_image))
+    {
+        a.cfg.background_image[0] = 0;
+        fprintf(stderr, "background: cannot find '%s'\n", bg_cli);
+    }
     if (bg_fit_cli)
     {
         if (strcmp(bg_fit_cli, "contain") == 0) a.cfg.background_fit = BG_FIT_CONTAIN;
@@ -1117,7 +1187,12 @@ int main(int argc, char** argv)
         if (op > 1.0f) op = 1.0f;
         a.cfg.editor_opacity = op;
     }
-    if (theme_cli) snprintf(a.cfg.theme, sizeof a.cfg.theme, "%s", theme_cli);
+    if (theme_cli &&
+        !config_resolve_path(theme_cli, NULL, a.cfg.theme, sizeof a.cfg.theme))
+    {
+        a.cfg.theme[0] = 0;
+        fprintf(stderr, "theme: cannot find '%s'\n", theme_cli);
+    }
     if (no_session) a.cfg.session_restore = false;
     theme_load_file(a.cfg.theme);
 #if defined(GLFW_WAYLAND_LIBDECOR) && defined(GLFW_WAYLAND_DISABLE_LIBDECOR)
@@ -1125,16 +1200,40 @@ int main(int argc, char** argv)
      * decorations.  Always use the compositor/GLFW fallback instead. */
     glfwInitHint(GLFW_WAYLAND_LIBDECOR, GLFW_WAYLAND_DISABLE_LIBDECOR);
 #endif
-    if (!glfwInit()) return 1;
+    if (!glfwInit()) {
+        /* With a platform-specific GLFW (e.g. the vendored Wayland-only build)
+         * a missing display server is a common, silent failure.  Say what is
+         * missing instead of exiting 1 with no output. */
+        const char* desc = NULL;
+        int code = glfwGetError(&desc);
+        if (desc && code) fprintf(stderr, "glfw: init failed: %s (0x%X)\n", desc, code);
+        else if (desc)     fprintf(stderr, "glfw: init failed: %s\n", desc);
+        else               fprintf(stderr, "glfw: init failed (no diagnostic)\n");
+        fprintf(stderr, "glfw: no usable display server. This build was compiled "
+                        "for: %s\n", glfwGetVersionString());
+        fprintf(stderr, "glfw: WAYLAND_DISPLAY=%s DISPLAY=%s\n",
+                getenv("WAYLAND_DISPLAY") ? getenv("WAYLAND_DISPLAY") : "(unset)",
+                getenv("DISPLAY") ? getenv("DISPLAY") : "(unset)");
+        return 1;
+    }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
     a.window = glfwCreateWindow(1280, 800, "Quill", NULL, NULL);
-    if (!a.window) { glfwTerminate(); return 1; }
+    if (!a.window) {
+        const char* desc = NULL;
+        glfwGetError(&desc);
+        fprintf(stderr, "glfw: cannot create window: %s\n",
+                desc ? desc : "unknown error");
+        glfwTerminate();
+        return 1;
+    }
     glfwSetWindowUserPointer(a.window, &a);
     glfwGetWindowContentScale(a.window, &xscale, &yscale);
     a.scale = (uint32_t)(xscale > yscale ? xscale : yscale);
     if (a.scale < 1u) a.scale = 1u;
     a.size_px = 16u;
+    if (a.cfg.background_image[0] && !opacity_cli && a.cfg.editor_opacity >= 1.0f)
+        a.cfg.editor_opacity = 0.85f;
     if (!app_init_doc(&a, file)) return 1;
     a.fs = font_create(a.size_px, a.scale);
     a.dl = (DrawList*)MU_CALLOC(1u, sizeof *a.dl);
@@ -1172,11 +1271,24 @@ int main(int argc, char** argv)
 
     while (!glfwWindowShouldClose(a.window))
     {
+        /* Wake interval while motion is in flight. This was 0.004s (250Hz),
+         * four times faster than any display refreshes: the extra wakeups cost
+         * a full frame_build + Vulkan submit each and bought nothing visible.
+         * 0.008s matches a 120Hz display and halves the render count for a
+         * scroll or cursor spring without changing how it looks. */
         double timeout = 0.1;
         if (a.term_active && a.term && !terminal_exited(a.term)) timeout = 0.008;
-        else if (a.animating) timeout = 0.004;
+        else if (a.animating) timeout = 0.008;
         else if (a.picker && a.picker->open) timeout = 0.03;
-        else if (a.blink_active) timeout = 0.03;
+        /* Cursor blink. A stepped blink only changes state twice per period, so
+         * wake just past the next edge instead of polling at 33Hz. A smooth
+         * blink does need frames, but the whole draw list is rebuilt and
+         * re-submitted each time purely to change one quad's alpha, so it is
+         * paced to 20Hz: the fade is still continuous to the eye and the idle
+         * cost drops by a third. Step blink was 60% of idle CPU on its own. */
+        else if (a.blink_active)
+            timeout = a.cfg.smooth_blink ? 0.05
+                                         : (double)(a.cfg.blink_ms % 1000u) / 1000.0;
         glfwWaitEventsTimeout(timeout);
         if (a.term_active && a.term && terminal_poll(a.term)) a.redraw = true;
         if (a.picker) picker_poll(a.picker);

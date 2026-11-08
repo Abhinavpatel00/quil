@@ -34,12 +34,18 @@ typedef struct VfxState
     VfxHighlight hl[VFX_HL_COUNT];       /* sonicboom ripple wireframe pulse shockwave halo */
     float        dest_x, dest_y;
     bool         dest_valid;
+    /* Set by the frame layer every frame: did the logical cursor/selection
+     * target move?  Highlights restart on that, not on the pixel destination,
+     * which also moves during smooth scrolling and would reset them forever. */
+    bool         move_hint_valid;
+    bool         cursor_moved;
 } VfxState;
 
 uint32_t vfx_parse_modes(const char* s);
 const char* vfx_mode_name(uint32_t bit);
 void vfx_init(VfxState* v);
 void vfx_reset(VfxState* v);
+void vfx_notify_cursor(VfxState* v, bool moved);
 bool vfx_update(VfxState* v, const MotionConfig* cfg, float dt,
                 float dest_x, float dest_y, float w, float h,
                 bool immediate, const float base_lin[4]);

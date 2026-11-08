@@ -37,9 +37,15 @@ typedef struct MotionConfig
     /* Session: reopen last buffers + cursor/scroll on launch. */
     bool        session_restore;
     char        session_file[QUILL_BG_PATH];
+    /* Auto-save buffer when leaving Insert mode (Esc, operator, etc). */
+    bool        auto_save_on_mode_change;
 } MotionConfig;
 
 void config_defaults(MotionConfig* cfg);
 void config_load_file(MotionConfig* cfg, const char* path);
+
+/* Expand a leading ~, resolve a relative path against `base_dir`, and confirm
+ * the file is readable. Returns false if it cannot be resolved. */
+bool config_resolve_path(const char* in, const char* base_dir, char* out, size_t cap);
 
 #endif

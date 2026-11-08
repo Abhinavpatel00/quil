@@ -47,9 +47,34 @@ int main(void)
             panel_opaque = true;
     }
     assert(panel_opaque);
+
+    /* Closing must clear the overlay layer. render_app() only calls
+     * frame_overlay_begin() while something is open, so the overlay counters
+     * have to be reset by frame_build(); otherwise the renderer keeps drawing
+     * the last picker frame after p.open goes false. */
+    {
+        FrameScratch* scratch = (FrameScratch*)MU_CALLOC(1u, sizeof *scratch);
+        LineLayout layouts[QUILL_MAX_VISIBLE];
+        uint32_t nlayouts = 0u;
+        FrameParams fp;
+        assert(scratch);
+        memset(&fp, 0, sizeof fp);
+        fp.width = 1000u; fp.height = 600u; fp.tab_width = 4u; fp.line_numbers = true;
+        frame_overlay_begin(dl);
+        picker_render(&p, fs, dl, fp.width, fp.height, 0.35f);
+        frame_overlay_end(dl);
+        assert(dl->nov_solids > 0u);
+        assert(dl->nov_glyphs > 0u);
+        picker_close(&p);
+        frame_build(d, fs, &fp, dl, scratch, layouts, &nlayouts);
+        assert(dl->nov_solids == 0u);
+        assert(dl->nov_glyphs == 0u);
+        MU_FREE(scratch);
+    }
     MU_FREE(dl);
     font_destroy(fs);
 
+    picker_open(&p, PSRC_COMMANDS);
     assert(picker_key(&p, GLFW_KEY_DOWN, 0));
     assert(p.selected == 1u);
     assert(picker_key(&p, GLFW_KEY_ENTER, 0));

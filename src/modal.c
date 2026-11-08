@@ -291,13 +291,16 @@ static bool motion_target(Document* d, uint32_t off, int key, uint32_t count,
     mu_quill_cursor c = mu_quill_offset_to_cursor(&d->q, off);
     uint32_t lo = mu_quill_line_offset(&d->q, c.line);
     uint32_t hi = line_end(d, off);
+    /* line_end() points AT the newline.  Vim's '$' and 'l' stop on the last
+     * character, so keep a separate value for anything cursor-like. */
+    uint32_t last = hi > lo ? hi - 1u : lo;
     *linewise = false;
     *inclusive = false;
     *target = off;
     switch (key)
     {
     case 'h': *target = off - lo >= count ? off - count : lo; return true;
-    case 'l': *target = hi - off >= count ? off + count : hi; return true;
+    case 'l': *target = last - off >= count ? off + count : last; return true;
     case 'j':
         *linewise = true;
         if (c.line + count < d->q.nlines)
@@ -318,10 +321,11 @@ static bool motion_target(Document* d, uint32_t off, int key, uint32_t count,
         *target = lo + i;
         return true;
     }
-    case '$': *target = hi; *inclusive = true; return true;
-    case 'w': *target = word_next(d, off, count); return true;
-    case 'b': *target = word_prev(d, off, count); return true;
-    case 'e': *target = word_end(d, off, count); *inclusive = true; return true;
+    case '$': *target = last; *inclusive = true; return true;
+    /* W/B/E are documented as the same word-class motion as w/b/e for now. */
+    case 'w': case 'W': *target = word_next(d, off, count); return true;
+    case 'b': case 'B': *target = word_prev(d, off, count); return true;
+    case 'e': case 'E': *target = word_end(d, off, count); *inclusive = true; return true;
     case 'G': *target = d->q.text_len; *linewise = true; return true;
     case 'g': *target = 0u; *linewise = true; return true; /* gg */
     case '{': *target = paragraph(d, off, -1, count); return true;
@@ -370,15 +374,40 @@ static bool textobj_range(Document* d, uint32_t off, int obj, bool around,
         return true;
     case '"': case '\'': case '`':
     {
+        /* Quote objects are strictly within one line.  vim's rule: find the
+         * opening quote at or before the cursor and the closing one after it.
+         * The previous version walked back to the quote but then used the
+         * cursor's own column as the start, so di" on "hi there" produced "h"
+         * instead of the empty string. */
         uint8_t q = (uint8_t)obj;
-        a = col; b = col;
-        while (a > 0u && buf[a - 1u] != q) a--;
-        if (a == 0u && buf[0] != q) return false;
-        if (buf[a] == q && a > 0u) a--;
-        while (b < n && buf[b] != q) b++;
-        if (b >= n) return false;
-        *start = lo + a;
-        *end = lo + b + 1u;
+        uint32_t open = 0u, close = 0u;
+        bool found = false;
+
+        /* treat a quote under the cursor as the opening one, but fall back to
+         * searching backwards when that quote has no partner after it */
+        for (uint32_t from = col + 1u; from-- > 0u; )
+        {
+            uint32_t t;
+            if (buf[from] != q) continue;
+            for (t = from + 1u; t < n && buf[t] != q; ++t) { }
+            if (t < n) { open = from; close = t; found = true; break; }
+        }
+        if (!found)
+        {
+            /* cursor is between quotes that are both before it: pair the last
+             * quote before the cursor with the first one after it */
+            uint32_t o = col, c;
+            while (o > 0u && buf[o - 1u] != q) o--;
+            if (!(o == 0u && buf[0] != q)) o = o > 0u ? o - 1u : 0u;
+            else return false;
+            for (c = o + 1u; c < n && buf[c] != q; ++c) { }
+            if (c >= n) return false;
+            open = o; close = c; found = true;
+        }
+        (void)found;
+
+        *start = lo + open;
+        *end = lo + close + 1u;
         if (!around) { (*start)++; (*end)--; }
         return true;
     }
@@ -576,6 +605,9 @@ void modal_escape(ModalState* m, Document* d, SelectionSet* ss)
         m->mode = QMODE_NORMAL;
         m->dot.recording_insert = false;
         ss_sync_doc(ss, d);
+        /* Auto-save on leaving Insert mode when enabled (config default: true). */
+        if (m->auto_save_on_mode_change && d->dirty && d->path[0])
+            doc_save_file(d, NULL);
         return;
     }
     if (m->mode == QMODE_VISUAL || m->mode == QMODE_VISUAL_LINE || m->mode == QMODE_VISUAL_BLOCK)
@@ -650,9 +682,17 @@ static void delete_ranges(ModalState* m, Document* d, SelectionSet* ss,
 
 static void expand_linewise(Document* d, uint32_t* start, uint32_t* end)
 {
-    *start = line_start(d, *start);
-    *end = line_end(d, *end);
-    if (*end < d->q.text_len) (*end)++;
+    /* Grow [start,end) to cover whole lines.  The last line is derived from the
+     * offset itself rather than from line_end()+1: line_end() points AT the
+     * newline, and stepping past that offset lands in the NEXT line, which is
+     * how '>>' ended up indenting one line too many. */
+    uint32_t firstline = mu_quill_offset_to_cursor(&d->q, *start).line;
+    uint32_t lastline  = mu_quill_offset_to_cursor(&d->q, *end).line;
+    uint32_t le;
+    *start = mu_quill_line_offset(&d->q, firstline);
+    le = line_end(d, mu_quill_line_offset(&d->q, lastline));
+    if (le < d->q.text_len) le++;      /* include the newline */
+    *end = le;
 }
 
 static void case_ranges(Document* d, SelectionSet* ss, uint32_t* starts, uint32_t* ends,
@@ -686,7 +726,12 @@ static void indent_ranges(Document* d, SelectionSet* ss, uint32_t* starts, uint3
     uint32_t lines[QUILL_MAX_LINE], nl = 0u, i, j;
     for (i = 0u; i < n; ++i)
     {
-        uint32_t a = line_no(d, starts[i]), b = line_no(d, ends[i]);
+        /* ranges are half-open [start,end), so the last line covered is the one
+         * holding byte end-1.  Using line_no(end) picks up the FOLLOWING line
+         * whenever the range ends on a newline, which is exactly how '>>'
+         * indented one line too many. */
+        uint32_t a = line_no(d, starts[i]);
+        uint32_t b = line_no(d, ends[i] > starts[i] ? ends[i] - 1u : ends[i]);
         for (j = a; j <= b; ++j)
         {
             uint32_t k, dup = 0u;
@@ -773,7 +818,22 @@ static void execute_op(ModalState* m, Document* d, SelectionSet* ss,
     else if (op == 'd' || op == 'c')
     {
         delete_ranges(m, d, ss, starts, ends, n, linewise, op == 'c', now);
-        dot_keys(m, op == 'd' ? "d" : "c");
+        {
+            /* '.' must replay the whole command. Recording a bare "d"/"c" only
+             * re-arms the operator, and the next key then becomes its motion --
+             * e.g. dd, '.', j silently deletes two lines. */
+            char keys[16];
+            size_t k = 0u;
+            if (m->op_motion_count > 1u)
+                k = (size_t)snprintf(keys, sizeof keys, "%u", m->op_motion_count);
+            if (m->op_motion_char)
+                snprintf(keys + k, sizeof keys - k, "%c%c", op == 'd' ? 'd' : 'c',
+                         m->op_motion_char);
+            else
+                snprintf(keys + k, sizeof keys - k, "%c%c", op == 'd' ? 'd' : 'c',
+                         op == 'd' ? 'd' : 'c');
+            dot_keys(m, keys);
+        }
     }
     else if (op == '>' || op == '<')
     {
@@ -796,11 +856,15 @@ static void execute_op(ModalState* m, Document* d, SelectionSet* ss,
     m->case_op = 0;
     m->pending = 0;
     m->count = 0u;
+    m->op_motion_char = 0;
+    m->op_motion_count = 0u;
 }
 
 static bool operator_motion(ModalState* m, Document* d, SelectionSet* ss,
                             int key, uint64_t now)
 {
+    m->op_motion_char = key;
+    m->op_motion_count = count_or(m, 1u);
     uint32_t starts[QUILL_MAX_CURSORS], ends[QUILL_MAX_CURSORS];
     uint32_t i, n = ss->count, count = count_or(m, 1u);
     bool linewise = false, any_linewise = false;
@@ -1454,12 +1518,26 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
         }
         if (ch == m->op)
         {
+            m->op_motion_char = 0;     /* linewise: dd / cc / yy / >> / << */
+            m->op_motion_count = 0u;
             uint32_t starts[QUILL_MAX_CURSORS], ends[QUILL_MAX_CURSORS];
+            /* >> / << / == with count > 1 touch count lines; the count must be
+             * consumed here or execute_op hands it to the indenter, which then
+             * indents that many lines starting from the buffer start. */
+            uint32_t extra = count_or(m, 1u);
             for (i = 0u; i < ss->count; ++i)
             {
                 starts[i] = line_start(d, ss->c[i].head);
-                ends[i] = line_end(d, ss->c[i].head);
+                mu_quill_cursor c = mu_quill_offset_to_cursor(&d->q, starts[i]);
+                uint32_t lastline = c.line + extra - 1u;
+                if (lastline >= d->q.nlines) lastline = d->q.nlines - 1u;
+                /* End on the last CHARACTER, not the newline.  line_end() points
+                 * AT '\n', and line_no() maps that offset to the FOLLOWING line,
+                 * so ending there made '>>' indent the next line too. */
+                uint32_t le = line_end(d, mu_quill_line_offset(&d->q, lastline));
+                ends[i] = le > 0u ? le - 1u : 0u;
             }
+            m->count = 0u;
             execute_op(m, d, ss, starts, ends, ss->count, true, now);
             return true;
         }
@@ -1600,6 +1678,8 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
             ends[i] = line_end(d, starts[i]);
         }
         m->op = ch == 'D' ? 'd' : (ch == 'C' ? 'c' : 'y');
+        m->op_motion_char = '$';
+        m->op_motion_count = 0u;
         execute_op(m, d, ss, starts, ends, ss->count, false, now);
         return true;
     }
@@ -1645,7 +1725,8 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
     if (ch == 'N') { modal_search_next(m, d, ss, -m->search_dir); return true; }
     if (ch == ':' ) { m->request = QREQ_PICKER_COMMANDS; return true; }
 
-    if (ch == 'h' || ch == 'j' || ch == 'k' || ch == 'l' || ch == 'w' || ch == 'b' || ch == 'e' ||
+    if (ch == 'h' || ch == 'j' || ch == 'k' || ch == 'l' ||
+        ch == 'w' || ch == 'b' || ch == 'e' || ch == 'W' || ch == 'B' || ch == 'E' ||
         ch == '0' || ch == '^' || ch == '$' || ch == '{' || ch == '}' || ch == '%' || ch == ';' || ch == ',' ||
         ch == 'G')
     {

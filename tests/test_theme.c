@@ -2,6 +2,23 @@
 #include "config.h"
 #include <assert.h>
 
+/* Values may carry inline comments, as in quill.conf.example.  The comment must
+ * not become part of the value: paths failed to resolve and booleans/names
+ * never matched. */
+static void write_config(const char* path)
+{
+    FILE* f = fopen(path, "w");
+    assert(f);
+    fputs("style = linear              # ease | linear | instant\n"
+          "smooth_blink = true         # cosine fade\n"
+          "reduced_motion = true       # no animation\n"
+          "cursor_vfx_mode = railgun,ripple  # modes\n"
+          "background_image = ../assets/sample.c   # a readable path\n"
+          "theme = none                # built-in\n"
+          "editor_opacity = 0.5        # 0..1\n", f);
+    fclose(f);
+}
+
 /* Write a palette file exercising every accepted color spelling, an unknown
  * key, and an invalid color (which must leave the slot at its default). */
 static void write_theme(const char* path)
@@ -48,6 +65,18 @@ int main(void)
     assert(QUILL_THEME.syntax[QC_STRING] == 0xFF0000FFu);  /* #RGB expanded */
     assert(QUILL_THEME.syntax[QC_NUMBER] == 0xFF0000FFu);  /* invalid -> default */
     assert(QUILL_THEME.gutter_bg == 0x121212FFu);          /* absent -> default */
+
+    /* Inline comments are stripped from config values. */
+    write_config("build/test_config.conf");
+    config_load_file(&cfg, "build/test_config.conf");
+    assert(cfg.style == MOTION_LINEAR);
+    assert(cfg.smooth_blink == true);
+    assert(cfg.reduced_motion == true);
+    assert(cfg.vfx_modes == (VFX_RAILGUN | VFX_RIPPLE));
+    assert(cfg.background_image[0] != 0);
+    assert(strstr(cfg.background_image, "sample.c") != NULL);
+    assert(cfg.theme[0] == 0);
+    assert(cfg.editor_opacity == 0.5f);
 
     /* Reset returns to the built-in. */
     theme_reset();

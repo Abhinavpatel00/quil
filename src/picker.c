@@ -445,6 +445,37 @@ void picker_close(Picker* p)
     pthread_mutex_unlock(&p->mu);
 }
 
+/* Returns the index of the item at screen coordinates (x, y), or -1 if outside
+ * the list. Used by mouse clicks to select and close the picker. */
+int picker_hit_test(const Picker* p, uint32_t width, uint32_t height,
+                    float font_line_height, float x, float y)
+{
+    float w, h, px, py, rowh, pad, list_w;
+    uint32_t maxrows, start, end, i;
+    if (!p->open || p->count == 0u) return -1;
+    w = (float)width * 0.86f;
+    h = (float)height * 0.82f;
+    if (w > 1100.0f) w = 1100.0f;
+    if (h > 720.0f) h = 720.0f;
+    px = ((float)width - w) * 0.5f;
+    py = ((float)height - h) * 0.5f;
+    pad = 10.0f;
+    rowh = font_line_height + 4.0f;
+    list_w = w * 0.55f;
+    if (x < px || x > px + list_w || y < py || y > py + h) return -1;
+    maxrows = (uint32_t)((h - 2.0f * pad - font_line_height - 10.0f) / rowh);
+    if (maxrows == 0u) maxrows = 1u;
+    start = p->selected > maxrows / 2u ? p->selected - maxrows / 2u : 0u;
+    end = start + maxrows;
+    if (end > p->count) end = p->count;
+    for (i = start; i < end; ++i)
+    {
+        float ry = py + pad + font_line_height + 10.0f + (float)(i - start) * rowh;
+        if (y >= ry && y < ry + rowh) return (int)i;
+    }
+    return -1;
+}
+
 void picker_poll(Picker* p)
 {
     pthread_mutex_lock(&p->mu);
@@ -553,15 +584,28 @@ void picker_render(const Picker* p, FontSystem* fs, DrawList* dl, uint32_t width
      * the editor chrome opacity, so text stays legible over a background
      * image or a translucent editor. */
     (void)editor_opacity;
-    quill_color_linear(QUILL_THEME.status_bg, panel);
-    quill_color_linear(QUILL_THEME.line_hl, border);
+    /* Surface colours. `status_bg` is the bare background in Noir (0x000000),
+     * so a panel painted with it is invisible against the editor regardless of
+     * layering: there is no edge, only the scrim. Use `gutter_bg` for the panel
+     * and `gutter_fg` for rules so the surface reads as a distinct plane.
+     * Both are opaque, and `selection` is forced opaque here: an alpha of 0x66
+     * (40%) over a dark panel leaves the selected row almost indistinguishable
+     * from the rows around it, which is what made the list hard to scan. */
+    quill_color_linear(QUILL_THEME.gutter_bg, panel);
+    quill_color_linear(QUILL_THEME.gutter_fg, border);
     quill_color_linear(QUILL_THEME.fg, fg);
     quill_color_linear(QUILL_THEME.gutter_fg, dim);
-    quill_color_linear(QUILL_THEME.line_hl, selbg);
+    quill_color_linear(QUILL_THEME.selection, selbg);
     quill_color_linear(QUILL_THEME.accent, accent);
     panel[3] = 1.0f;
-    border[3] = 1.0f;
+    border[3] = 0.75f;
     selbg[3] = 1.0f;
+    /* Lift the selected row above the panel surface; with selection at 0x303030
+     * opaque the contrast against gutter_bg 0x121212 is only ~1.3:1, too flat
+     * to find at a glance, so blend it toward the foreground. */
+    selbg[0] = selbg[0] * 0.55f + fg[0] * 0.45f * 0.18f;
+    selbg[1] = selbg[1] * 0.55f + fg[1] * 0.45f * 0.18f;
+    selbg[2] = selbg[2] * 0.55f + fg[2] * 0.45f * 0.18f;
     lh = font_line_height(fs);
     pad = 10.0f;
     w = (float)width * 0.86f;

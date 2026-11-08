@@ -1,4 +1,7 @@
 #include "config.h"
+
+#include <stdio.h>
+#include <unistd.h>
 #include "vfx.h"
 
 void config_defaults(MotionConfig* cfg)
@@ -27,6 +30,7 @@ void config_defaults(MotionConfig* cfg)
     cfg->theme[0] = 0;
     cfg->session_restore = true;
     snprintf(cfg->session_file, sizeof cfg->session_file, "%s", "~/.config/quill/session");
+    cfg->auto_save_on_mode_change = true;
 }
 
 static uint32_t parse_u32(const char* s)
@@ -34,6 +38,48 @@ static uint32_t parse_u32(const char* s)
     uint32_t v = 0u;
     while (*s >= '0' && *s <= '9') v = v * 10u + (uint32_t)(*s++ - '0');
     return v;
+}
+
+/* Expand a leading ~ and resolve relative paths against the directory the
+ * config file lives in, then verify the result exists.
+ *
+ * Every path in this file is handed straight to FreeType / stb_image, neither
+ * of which knows what ~ means, so `background_image = ~/hm.png` used to fail
+ * with "cannot load '~/hm.png'" even though the file was there. A path was
+ * also previously interpreted relative to the *current working directory*,
+ * which is whatever directory the editor happened to be launched from -- so the
+ * same config worked from $HOME and failed from anywhere else. Both are fixed
+ * here, once, for every path-valued key.
+ *
+ * Returns false (and leaves the buffer empty) when the path cannot be
+ * resolved, so the caller can report it instead of silently doing nothing. */
+bool config_resolve_path(const char* in, const char* base_dir,
+                         char* out, size_t cap)
+{
+    char tmp[1024];
+    if (!in || !in[0] || !out || cap == 0u) return false;
+
+    if (in[0] == '~')
+    {
+        const char* home = getenv("HOME");
+        if (!home || !home[0]) return false;
+        if (in[1] == '/' || in[1] == 0)
+            snprintf(tmp, sizeof tmp, "%s%s", home, in + 1);
+        else
+            return false; /* ~user is not supported; be explicit, not wrong */
+    }
+    else if (in[0] == '/')
+        snprintf(tmp, sizeof tmp, "%.*s", (int)(sizeof tmp - 1u), in);
+    else if (base_dir && base_dir[0])
+        snprintf(tmp, sizeof tmp, "%.*s/%.*s",
+                 (int)(sizeof tmp / 2u), base_dir,
+                 (int)(sizeof tmp / 2u - 2u), in);
+    else
+        snprintf(tmp, sizeof tmp, "%.*s", (int)(sizeof tmp - 1u), in);
+
+    if (access(tmp, R_OK) != 0) return false;
+    snprintf(out, cap, "%.*s", (int)(cap - 1u), tmp);
+    return true;
 }
 
 static float clamp01(float v)
@@ -47,10 +93,30 @@ void config_load_file(MotionConfig* cfg, const char* path)
 {
     FILE* f;
     char line[1024];
+    char base_dir[1024];
+    bool opacity_seen = false;
     config_defaults(cfg);
     if (!path) return;
+    base_dir[0] = 0;
+    {
+        /* directory of the config file, for resolving relative paths */
+        const char* slash = strrchr(path, '/');
+        if (slash)
+            snprintf(base_dir, sizeof base_dir, "%.*s", (int)(slash - path), path);
+        else
+            snprintf(base_dir, sizeof base_dir, ".");
+    }
     f = fopen(path, "r");
-    if (!f) return;
+    if (!f)
+    {
+        /* A missing config is normal: the default "quill.conf" usually is not
+         * there. Only complain when the user explicitly named a file. */
+        char dflt[1024];
+        snprintf(dflt, sizeof dflt, "%s", path);
+        if (strcmp(dflt, "quill.conf") != 0)
+            fprintf(stderr, "config: cannot open '%s' (using defaults)\n", path);
+        return;
+    }
     while (fgets(line, sizeof line, f))
     {
         char* eq = strchr(line, '=');
@@ -66,9 +132,28 @@ void config_load_file(MotionConfig* cfg, const char* path)
                 *--end = 0;
         }
         while (*v == ' ' || *v == '\t') v++;
+        /* Strip an inline comment before the value is used.  The example config
+         * documents every key as `key = value   # explanation`, and without
+         * this the comment became part of the value: path lookups failed with
+         * the whole trailing text in the filename, booleans stopped matching
+         * "true", and VFX mode lists never matched a name.  A '#' only starts
+         * a comment at the start of the value or after whitespace, so paths
+         * that legitimately contain '#' still work. */
+        {
+            char* hash = v;
+            while (*hash)
+            {
+                if (*hash == '#' && (hash == v || hash[-1] == ' ' || hash[-1] == '\t'))
+                {
+                    *hash = 0;
+                    break;
+                }
+                hash++;
+            }
+        }
         {
             char* end = v + strlen(v);
-            while (end > v && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' '))
+            while (end > v && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t'))
                 *--end = 0;
         }
         if (strcmp(k, "style") == 0)
@@ -97,7 +182,13 @@ void config_load_file(MotionConfig* cfg, const char* path)
         else if (strcmp(k, "background_image") == 0)
         {
             if (strcmp(v, "none") == 0 || v[0] == 0) cfg->background_image[0] = 0;
-            else snprintf(cfg->background_image, sizeof cfg->background_image, "%s", v);
+            else if (!config_resolve_path(v, base_dir, cfg->background_image,
+                                          sizeof cfg->background_image))
+            {
+                cfg->background_image[0] = 0;
+                fprintf(stderr, "config: background_image '%s' not found "
+                                "(resolved relative to '%s'); ignoring\n", v, base_dir);
+            }
         }
         else if (strcmp(k, "background_fit") == 0)
         {
@@ -105,14 +196,39 @@ void config_load_file(MotionConfig* cfg, const char* path)
             else if (strcmp(v, "stretch") == 0) cfg->background_fit = BG_FIT_STRETCH;
             else cfg->background_fit = BG_FIT_COVER;
         }
-        else if (strcmp(k, "editor_opacity") == 0) cfg->editor_opacity = clamp01((float)strtod(v, NULL));
+        else if (strcmp(k, "editor_opacity") == 0)
+        {
+            cfg->editor_opacity = clamp01((float)strtod(v, NULL));
+            opacity_seen = true;
+        }
         else if (strcmp(k, "theme") == 0)
         {
             if (strcmp(v, "none") == 0 || strcmp(v, "default") == 0 || v[0] == 0) cfg->theme[0] = 0;
-            else snprintf(cfg->theme, sizeof cfg->theme, "%s", v);
+            else if (!config_resolve_path(v, base_dir, cfg->theme, sizeof cfg->theme))
+            {
+                cfg->theme[0] = 0;
+                fprintf(stderr, "config: theme '%s' not found "
+                                "(resolved relative to '%s'); ignoring\n", v, base_dir);
+            }
         }
         else if (strcmp(k, "session_restore") == 0) cfg->session_restore = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
         else if (strcmp(k, "session_file") == 0) snprintf(cfg->session_file, sizeof cfg->session_file, "%s", v);
+        else if (strcmp(k, "auto_save_on_mode_change") == 0) cfg->auto_save_on_mode_change = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
     }
     fclose(f);
+
+    /* A background image at editor_opacity = 1.0 is invisible: the editor
+     * background quad is drawn fully opaque over the texture. Loading it,
+     * uploading it and then covering it is indistinguishable from the image not
+     * loading at all, which is exactly the report this fixes. If the user asked
+     * for a background but never set an opacity, reveal it the way
+     * docs/APPEARANCE.md recommends. An explicit editor_opacity is respected
+     * either way. */
+    if (cfg->background_image[0] && !opacity_seen && cfg->editor_opacity >= 1.0f)
+    {
+        cfg->editor_opacity = 0.85f;
+        fprintf(stderr, "config: background_image set with editor_opacity = 1.0 "
+                        "(the image would be hidden); using 0.85. Set "
+                        "editor_opacity explicitly to silence this.\n");
+    }
 }

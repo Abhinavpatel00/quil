@@ -25,7 +25,7 @@ cursor_vfx_particle_curl = 1.0    # railgun/torpedo/pixiedust curl
 # Appearance (both optional; defaults add no overhead).
 # Background image drawn behind the editor. Empty/none disables it.
 # PNG / JPEG / BMP / TGA are supported.
-background_image = none           # e.g. /path/to/wallpaper.png
+background_image = ~/hm.jpg           # e.g. /path/to/wallpaper.png
 background_fit = cover            # cover | contain | stretch
 # Editor opacity fades only the chrome (background, gutter, highlights,
 # selections, status bar, picker). Text, cursor and VFX stay fully opaque.

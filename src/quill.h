@@ -15,18 +15,27 @@
 #include <malloc.h>
 #endif
 
-#include "mu/mu_quill.h"
-#include "mu/mu_vm_arena.h"
-#include "mu/mu_small_vec.h"
-#include "mu/mu_hash_table.h"
-#include "mu/mu_frame_allocator.h"
-#include "mu/mu_perf.h"
-#include "mu/mu_sort.h"
+#include "../third_party/mu_lib/mu/mu_quill.h"
+#include "../third_party/mu_lib/mu/mu_vm_arena.h"
+#include "../third_party/mu_lib/mu/mu_small_vec.h"
+#include "../third_party/mu_lib/mu/mu_hash_table.h"
+#include "../third_party/mu_lib/mu/mu_frame_allocator.h"
+#include "../third_party/mu_lib/mu/mu_perf.h"
+#include "../third_party/mu_lib/mu/mu_sort.h"
 
 #define QUILL_MAX_LINE      8192u
 #define QUILL_MAX_VISIBLE   256u
 #define QUILL_MAX_SPANS     8192u
-#define QUILL_MAX_GLYPHS    16384u
+/* Glyph ring capacity. Measured worst-case usage with the diag harness across
+ * 1280x800 .. 3840x2160 on sample.c, src/main.c, src/document.c and
+ * src/render_vk.c is 2530 glyphs at 3840x2160 (src/main.c); 1280x800 uses 364.
+ * The previous 16384 was ~6.5x the worst observed frame. 8192 keeps a 2.4x
+ * margin over the worst case while still covering a full 4K viewport plus the
+ * picker overlay, and halves the glyph vertex ring (3.00 -> 1.50 MiB) and the
+ * DrawList glyph array (768 -> 384 KiB). emit_glyph() already drops quads past
+ * the cap rather than overrunning, so an underestimate degrades instead of
+ * corrupting. */
+#define QUILL_MAX_GLYPHS    8192u
 #define QUILL_MAX_SOLIDS    4096u
 #define QUILL_TAB_WIDTH     4u
 #define QUILL_ATLAS_SMALL_SIZE 1024u
@@ -38,8 +47,21 @@
 #define QUILL_PICKER_RESULTS 1024u
 #define QUILL_PICKER_FILES  20000u
 #define QUILL_MAX_BUFFERS   64u
+/* VFX quad budget and per-mode particle cap.
+ *
+ * These are coupled: the old pair (MAX_VFX 4096, VFX_POOL 512) could not
+ * coexist, because 11 trail modes x 512 particles = 5632 particles can be
+ * alive at once while the draw list holds only 4096 quads. With several modes
+ * enabled at once the list saturated and emit_vfx() silently discarded the
+ * remainder, which is why multi-mode VFX looked like it was "not working" --
+ * whole modes vanished, whichever happened to be rendered last.
+ *
+ * 256 particles per mode still covers a fast cursor sweep (a sweep of N cells
+ * spawns ~N * density particles, capped at 256 per update, and they decay), and
+ * 11 x 256 = 2816 fits inside 4096 with room for the 6 highlight modes.
+ * The static assert below keeps the two from drifting apart again. */
 #define QUILL_MAX_VFX       4096u
-#define QUILL_VFX_POOL      512u
+#define QUILL_VFX_POOL      256u
 
 /* Cursor VFX bits. Neovide's six modes plus Quill extras. Multiple bits may
  * be enabled at once, matching Neovide's mode-list behavior. */
@@ -65,6 +87,11 @@
 #define VFX_TRAIL_COUNT 11u
 #define VFX_HL_COUNT    6u
 
+/* Trail + highlight quads must fit the draw list, or modes get culled. */
+#if (VFX_TRAIL_COUNT * QUILL_VFX_POOL + VFX_HL_COUNT) > QUILL_MAX_VFX
+#error "VFX particle pool exceeds the quad budget: modes will be silently dropped"
+#endif
+
 typedef enum QMode
 {
     QMODE_NORMAL = 0,
@@ -75,6 +102,12 @@ typedef enum QMode
 } QMode;
 
 /* sRGB 0xRRGGBBAA; converted to linear before upload. */
+/* Overlay layer buffers, defined in quill.h next to the other caps because
+ * DrawList (frame.h) is what stores them. Keep in sync with QUILL_MAX_SOLIDS /
+ * QUILL_MAX_GLYPHS: an overlay is never larger than a full frame. */
+#define QUILL_MAX_OVERLAY_SOLIDS 1024u
+#define QUILL_MAX_OVERLAY_GLYPHS 8192u
+
 typedef struct QuillTheme
 {
     uint32_t bg, fg, gutter_bg, gutter_fg, line_hl, selection, cursor;

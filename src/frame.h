@@ -37,6 +37,14 @@ typedef struct DrawList
     VfxQuad   vfx[QUILL_MAX_VFX];
     uint32_t  nvfx;
     uint32_t  overflow;
+
+    /* Overlay layer (picker, search prompt). See frame_overlay_begin(). Stored
+     * inline rather than malloc'd so there is no per-frame allocation. */
+    SolidQuad ov_solids[QUILL_MAX_OVERLAY_SOLIDS];
+    GlyphQuad ov_glyphs[QUILL_MAX_OVERLAY_GLYPHS];
+    uint32_t  nov_solids;
+    uint32_t  nov_glyphs;
+    bool      in_overlay;
 } DrawList;
 
 typedef struct LineLayout
@@ -57,6 +65,10 @@ typedef struct CursorAnim
     float    vx, vy, vw, vh;
     uint64_t last_ms;
     bool     valid;
+    /* Logical (line, col) target of the previous frame, used to tell a real
+     * cursor move from the pixel change caused by smooth scrolling. */
+    uint32_t target_line, target_col;
+    bool     target_valid;
     float    trail_x[QUILL_CURSOR_TRAIL];
     float    trail_y[QUILL_CURSOR_TRAIL];
     float    trail_w[QUILL_CURSOR_TRAIL];
@@ -77,6 +89,9 @@ typedef struct FrameParams
     const ModalState*   modal;
     const char*         search_query;
     uint64_t            now_ms;
+    /* High-resolution frame delta in seconds.  When zero (harnesses that only
+     * set now_ms) the animation falls back to the millisecond clock. */
+    float               dt;
     uint32_t            cursor_ms;
     const MotionConfig* motion;
     CursorAnim*         cursor_anim;
@@ -100,6 +115,23 @@ uint32_t frame_hit_test(const FrameParams* p, const LineLayout* layouts,
                         uint32_t nlayouts, float line_height, float gutter,
                         float x, float y, Document* d);
 
+
+/* Overlay layering.
+ *
+ * The renderer draws the whole frame in three batches -- every solid quad,
+ * then every glyph quad, then every VFX quad -- so a primitive appended to the
+ * DrawList does NOT paint on top of primitives of a different kind that were
+ * appended earlier. Anything drawn after frame_build() (the picker, the search
+ * prompt) would otherwise have its panel painted *underneath* all editor
+ * glyphs, which is what made the picker unreadable: editor text showed through
+ * the panel because the panel was simply behind it.
+ *
+ * frame_overlay_begin() starts a new layer: the base layer is copied out and
+ * the list is emptied, so the overlay's solids and glyphs are both emitted
+ * after every base-layer primitive and therefore composite on top. The layer
+ * is uploaded and drawn after the base batch. */
+void frame_overlay_begin(DrawList* dl);
+void frame_overlay_end(DrawList* dl);
 
 void frame_rect(DrawList* dl, float x, float y, float w, float h, const float c[4]);
 void frame_text(FontSystem* fs, DrawList* dl, const char* text, uint32_t len,

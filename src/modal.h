@@ -36,6 +36,10 @@ typedef struct ModalState
     int      reg;
     int      case_op;
     int      last_find_char, last_find_dir, last_find_till;
+    /* Motion key that terminated the last operator, kept so '.' can record and
+     * replay "operator+motion" instead of a bare operator. 0 = linewise (dd/cc). */
+    int      op_motion_char;
+    uint32_t op_motion_count;
     uint32_t block_anchor;
     char     search[256];
     int      search_dir;
@@ -45,6 +49,8 @@ typedef struct ModalState
     uint32_t reg_len[QUILL_MAX_REGISTERS];
     bool     reg_linewise[QUILL_MAX_REGISTERS];
     struct GLFWwindow* window;
+    /* Auto-save buffer when leaving Insert mode (config: auto_save_on_mode_change). */
+    bool     auto_save_on_mode_change;
 } ModalState;
 
 void modal_init(ModalState* m);

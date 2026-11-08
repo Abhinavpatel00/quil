@@ -68,5 +68,7 @@ const PickerItem* picker_selected(const Picker* p);
 void picker_render(const Picker* p, FontSystem* fs, DrawList* dl, uint32_t width, uint32_t height,
                    float editor_opacity);
 int picker_fuzzy_score(const char* query, const char* text);
+int picker_hit_test(const Picker* p, uint32_t width, uint32_t height,
+                    float font_line_height, float x, float y);
 
 #endif

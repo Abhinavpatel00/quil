@@ -84,6 +84,68 @@ int main(void)
         assert(!vfx_active(&nv));
     }
 
+    /* Smoothness: the same elapsed time must produce the same simulation
+     * whether it arrives as one 60 Hz frame or two 120 Hz frames.  Before the
+     * fixed sub-stepping / exponential damping this diverged (per-frame
+     * multipliers and one variable Euler step), which is what made trails
+     * shimmer when the compositor changed pace. */
+    {
+        MotionConfig c3;
+        VfxState a, b;
+        uint32_t m;
+        config_defaults(&c3);
+        c3.vfx_modes = VFX_COMET | VFX_CONFETTI | VFX_EMBER | VFX_AURORA |
+                       VFX_GLITCH | VFX_SNOW | VFX_SPARK | VFX_SMOKE;
+        vfx_init(&a);
+        vfx_init(&b);
+        /* Establish the previous destination, then move once. */
+        vfx_update(&a, &c3, 1.0f / 60.0f, 0.0f, 0.0f, 8.0f, 16.0f, false, base);
+        vfx_update(&b, &c3, 1.0f / 120.0f, 0.0f, 0.0f, 8.0f, 16.0f, false, base);
+        vfx_update(&b, &c3, 1.0f / 120.0f, 0.0f, 0.0f, 8.0f, 16.0f, false, base);
+        vfx_update(&a, &c3, 1.0f / 60.0f, 120.0f, 48.0f, 8.0f, 16.0f, false, base);
+        vfx_update(&b, &c3, 1.0f / 120.0f, 60.0f, 24.0f, 8.0f, 16.0f, false, base);
+        vfx_update(&b, &c3, 1.0f / 120.0f, 120.0f, 48.0f, 8.0f, 16.0f, false, base);
+        for (i = 0u; i < 30u; ++i)
+            vfx_update(&a, &c3, 1.0f / 60.0f, 120.0f, 48.0f, 8.0f, 16.0f, false, base);
+        for (i = 0u; i < 60u; ++i)
+            vfx_update(&b, &c3, 1.0f / 120.0f, 120.0f, 48.0f, 8.0f, 16.0f, false, base);
+        for (m = 0u; m < VFX_TRAIL_COUNT; ++m)
+        {
+            assert(a.trail[m].count == b.trail[m].count);
+            for (i = 0u; i < a.trail[m].count; ++i)
+            {
+                assert(a.trail[m].x[i] == b.trail[m].x[i]);
+                assert(a.trail[m].y[i] == b.trail[m].y[i]);
+                assert(a.trail[m].vx[i] == b.trail[m].vx[i]);
+                assert(a.trail[m].vy[i] == b.trail[m].vy[i]);
+                assert(a.trail[m].life[i] == b.trail[m].life[i]);
+            }
+        }
+    }
+
+    /* Smooth scrolling moves the destination every frame without moving the
+     * logical cursor; highlights must keep expanding, not restart each frame. */
+    {
+        MotionConfig c4;
+        VfxState h;
+        float t_after_move, t_after_scroll;
+        config_defaults(&c4);
+        c4.vfx_modes = VFX_RIPPLE;
+        vfx_init(&h);
+        vfx_notify_cursor(&h, true);
+        vfx_update(&h, &c4, 0.016f, 0.0f, 0.0f, 8.0f, 16.0f, false, base);
+        assert(h.hl[1].active);
+        vfx_notify_cursor(&h, true);
+        vfx_update(&h, &c4, 0.016f, 10.0f, 0.0f, 8.0f, 16.0f, false, base);
+        t_after_move = h.hl[1].t;
+        assert(t_after_move > 0.0f);
+        vfx_notify_cursor(&h, false);
+        vfx_update(&h, &c4, 0.016f, 20.0f, 0.0f, 8.0f, 16.0f, false, base);
+        t_after_scroll = h.hl[1].t;
+        assert(t_after_scroll > t_after_move);
+        assert(h.hl[1].cx == 20.0f + 4.0f);
+    }
+
     MU_FREE(dl);
     puts("test_vfx: PASS");
     return 0;

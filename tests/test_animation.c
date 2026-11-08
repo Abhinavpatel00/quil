@@ -1,4 +1,5 @@
 #include "frame.h"
+#include "vfx.h"
 #include <assert.h>
 
 int main(void)
@@ -73,6 +74,48 @@ int main(void)
     frame_build(&d, fs, &p, dl, sc, layouts, &nl);
     assert(!anim);
     assert(fabsf(ca.y - y0) < 0.2f);
+
+    /* VFX must be emitted from the animated cursor position.  A jump used to
+     * dump the whole trail at the spring target on the first frame, ahead of
+     * the still-sliding cursor; every particle of that first frame must now
+     * lie on the path the cursor has actually travelled. */
+    {
+        static VfxState v;
+        MotionConfig vc;
+        float target_y = 0.0f;
+        uint32_t li;
+        bool have_target = false;
+
+        vc = cfg;
+        vc.reduced_motion = false; /* the previous block enabled it */
+        vc.vfx_modes = VFX_RAILGUN;
+        vc.vfx_density = 40.0f; /* dense enough for several particles/frame */
+        vfx_init(&v);
+        memset(&ca, 0, sizeof ca);
+        ss_single(&ss, 0u);
+        p.motion = &vc;
+        p.vfx = &v;
+        p.dt = 1.0f / 60.0f;
+        p.now_ms += 16u;
+        frame_build(&d, fs, &p, dl, sc, layouts, &nl);
+
+        ss_single(&ss, mu_quill_cursor_to_offset(&d.q, 20u, 6u));
+        p.now_ms += 16u;
+        anim = false;
+        frame_build(&d, fs, &p, dl, sc, layouts, &nl);
+        for (li = 0u; li < nl; ++li)
+            if (layouts[li].line == 20u) { target_y = quill_floorf(layouts[li].y); have_target = true; }
+        assert(have_target);
+        assert(ca.y < target_y - 1.0f);              /* still sliding */
+        assert(v.trail[0].count > 0u);               /* it did spawn */
+        for (i = 0u; i < v.trail[0].count; ++i)
+        {
+            assert(v.trail[0].y[i] <= ca.y + 0.01f); /* not at the target */
+            assert(v.trail[0].y[i] < target_y);
+        }
+        p.motion = &cfg;
+        p.vfx = NULL;
+    }
 
     {
         float x = 0.0f, v = 0.0f;

@@ -61,9 +61,15 @@ cursor_vfx_particle_curl = 1.0
 - `shaders/vfx.{vert,frag}` draw SDF ovals/rects (filled or stroked) with
   screen-space anti-aliasing. The Vulkan renderer expands `VfxQuad` draw-list
   entries into a dedicated vertex buffer/pipeline.
-- VFX follow the primary cursor's animated destination. Immediate jumps
-  (`cursor_ms = 0`, reduced motion, far scroll snaps) suppress trail spawn but
-  still fire highlight modes, matching Neovide's `immediate_movement` rule.
+- VFX follow the primary cursor's spring-animated position, not its jump
+  destination: a move emits its particles along the path the cursor visibly
+  travels instead of dumping the whole burst ahead of it on the first frame.
+  Immediate jumps (`cursor_ms = 0`, reduced motion, far scroll snaps) suppress
+  trail spawn but still fire highlight modes, matching Neovide's
+  `immediate_movement` rule.
+- Simulation runs in fixed sub-steps of at most 1/120 s (Neovide's animation
+  step cap) using a nanosecond frame delta, and damping is exponential per
+  second, so trails move identically at 60, 120, or 144 Hz.
 
 ## Examples
 

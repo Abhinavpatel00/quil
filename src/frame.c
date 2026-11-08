@@ -10,9 +10,22 @@ static void emit_solid(DrawList* dl, float x, float y, float w, float h,
                        const float c[4])
 {
     SolidQuad* q;
+    uint32_t*  n;
+    SolidQuad* arr;
     if (w <= 0.0f || h <= 0.0f) return;
-    if (dl->nsolids >= QUILL_MAX_SOLIDS) { dl->overflow++; return; }
-    q = &dl->solids[dl->nsolids++];
+    if (dl->in_overlay)
+    {
+        n = &dl->nov_solids;
+        arr = dl->ov_solids;
+        if (*n >= QUILL_MAX_OVERLAY_SOLIDS) { dl->overflow++; return; }
+    }
+    else
+    {
+        n = &dl->nsolids;
+        arr = dl->solids;
+        if (*n >= QUILL_MAX_SOLIDS) { dl->overflow++; return; }
+    }
+    q = &arr[(*n)++];
     q->x = x; q->y = y; q->w = w; q->h = h;
     q->r = c[0]; q->g = c[1]; q->b = c[2]; q->a = c[3];
 }
@@ -21,9 +34,22 @@ static void emit_glyph(DrawList* dl, float x, float y, const AtlasEntry* e,
                        const float c[4], uint32_t atlas_w, uint32_t atlas_h)
 {
     GlyphQuad* q;
+    uint32_t*  n;
+    GlyphQuad* arr;
     if (!e || e->w == 0u || e->h == 0u) return;
-    if (dl->nglyphs >= QUILL_MAX_GLYPHS) { dl->overflow++; return; }
-    q = &dl->glyphs[dl->nglyphs++];
+    if (dl->in_overlay)
+    {
+        n = &dl->nov_glyphs;
+        arr = dl->ov_glyphs;
+        if (*n >= QUILL_MAX_OVERLAY_GLYPHS) { dl->overflow++; return; }
+    }
+    else
+    {
+        n = &dl->nglyphs;
+        arr = dl->glyphs;
+        if (*n >= QUILL_MAX_GLYPHS) { dl->overflow++; return; }
+    }
+    q = &arr[(*n)++];
     q->x = x; q->y = y; q->w = (float)e->w; q->h = (float)e->h;
     q->u0 = (float)e->x / (float)atlas_w;
     q->v0 = (float)e->y / (float)atlas_h;
@@ -84,6 +110,14 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
 
     dl->nsolids = 0u;
     dl->nglyphs = 0u;
+    dl->nvfx = 0u;
+    /* The overlay layer is only filled while something is open, so clearing it
+     * there is not enough: on the first frame after the picker closes nothing
+     * calls frame_overlay_begin(), the previous frame's ov_solids/ov_glyphs stay
+     * live, and the renderer keeps drawing that stale overlay. */
+    dl->nov_solids = 0u;
+    dl->nov_glyphs = 0u;
+    dl->in_overlay = false;
     dl->overflow = 0u;
     *nlayouts = 0u;
 
@@ -305,6 +339,19 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
                 }
             }
             if (!insert) tw = adv;
+            /* Snap the animation target to whole device pixels.
+             *
+             * Glyphs are emitted at quill_floorf(x) (see the emit path above),
+             * but the cursor rectangle was animated toward the *unrounded*
+             * advance, which is fractional for any font whose advance is not an
+             * integer (Fira Code at 16px is 9.6px). The spring was therefore
+             * chasing a position it could never settle on, and the 0.05px
+             * settle test below never fired: every cursor move kept the app in
+             * its 250Hz animating loop for ~0.7s. Snapping here makes the
+             * cursor crisp (it no longer lands between pixels) and gives the
+             * spring a reachable target. */
+            tx = quill_floorf(tx);
+            ty = quill_floorf(ty);
             if (!found || tx < text_x - adv || tx > (float)p->width)
             {
                 if (p->cursor_anim && si < QUILL_MAX_CURSORS)
@@ -321,7 +368,16 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
                 CursorAnim* ca = &p->cursor_anim[si];
                 const MotionConfig* cfg = p->motion;
                 float len_ms = (float)cfg->cursor_ms;
-                float dt = ca->valid ? (float)(p->now_ms - ca->last_ms) * 0.001f : 0.0f;
+                /* Use the caller's high-resolution delta so cursor and VFX
+                 * motion do not step in whole milliseconds; fall back to the
+                 * millisecond clock for harnesses that only set now_ms. */
+                float dt = 0.0f;
+                if (ca->valid)
+                {
+                    dt = p->dt > 0.0f ? p->dt
+                         : (p->now_ms > ca->last_ms ? (float)(p->now_ms - ca->last_ms) * 0.001f : 0.0f);
+                }
+                if (dt < 0.0f) dt = 0.0f;
                 float base_alpha = insert ? 1.0f : 0.45f;
                 bool active = false;
                 uint32_t ti;
@@ -342,9 +398,14 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
                     quill_spring_step(&ca->y, &ca->vy, ty, dt, len_ms);
                     quill_spring_step(&ca->w, &ca->vw, tw, dt, len_ms);
                     quill_spring_step(&ca->h, &ca->vh, th, dt, len_ms);
-                    if (quill_fabsf(ca->x - tx) < 0.05f && quill_fabsf(ca->vx) < 0.5f &&
-                        quill_fabsf(ca->y - ty) < 0.05f && quill_fabsf(ca->vy) < 0.5f &&
-                        quill_fabsf(ca->w - tw) < 0.05f && quill_fabsf(ca->h - th) < 0.05f)
+                    /* Settle when the cursor is within half a pixel and
+                     * moving slowly. The old 0.05px / 0.5px-per-frame pair was
+                     * stricter than the spring's own tail, so "settled" was
+                     * reached tens of frames after the eye could no longer see
+                     * motion, and each of those frames cost a full render. */
+                    if (quill_fabsf(ca->x - tx) < 0.5f && quill_fabsf(ca->vx) < 5.0f &&
+                        quill_fabsf(ca->y - ty) < 0.5f && quill_fabsf(ca->vy) < 5.0f &&
+                        quill_fabsf(ca->w - tw) < 0.5f && quill_fabsf(ca->h - th) < 0.5f)
                     {
                         ca->x = tx; ca->y = ty; ca->w = tw; ca->h = th;
                         ca->vx = ca->vy = ca->vw = ca->vh = 0.0f;
@@ -356,7 +417,27 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
 
                 if (p->vfx && si == ss->primary)
                 {
-                    bool vfx_on = vfx_update(p->vfx, cfg, dt, tx, ty, tw, th,
+                    /* A real cursor move is a change of logical target.  The
+                     * pixel target also moves every frame during smooth
+                     * scrolling, and treating that as a move restarts the
+                     * highlight rings continuously, which looks like a pulse
+                     * that never expands. */
+                    bool target_moved = !ca->target_valid ||
+                                        ca->target_line != sc.line || ca->target_col != sc.col;
+                    ca->target_line = sc.line;
+                    ca->target_col = sc.col;
+                    ca->target_valid = true;
+                    vfx_notify_cursor(p->vfx, target_moved);
+                    /* Emit from the cursor position that is actually on screen
+                     * this frame, not from the spring's destination.  Using
+                     * the destination made a jump dump its whole particle
+                     * burst on one frame while the cursor was still sliding
+                     * toward it: the trail popped into existence ahead of the
+                     * cursor and then sat there, which reads as jitter.  The
+                     * animated position spreads the same number of particles
+                     * evenly over the movement, so the trail is drawn by the
+                     * cursor as it travels. */
+                    bool vfx_on = vfx_update(p->vfx, cfg, dt, ca->x, ca->y, ca->w, ca->h,
                                              len_ms <= 0.0f, cur);
                     if (vfx_on && p->animating) *p->animating = true;
                 }
@@ -448,6 +529,20 @@ uint32_t frame_hit_test(const FrameParams* p, const LineLayout* layouts,
             return ll->offset + g->cluster;
     }
     return ll->offset + ll->len;
+}
+
+void frame_overlay_begin(DrawList* dl)
+{
+    if (!dl || dl->in_overlay) return;
+    dl->nov_solids = 0u;
+    dl->nov_glyphs = 0u;
+    dl->in_overlay = true;
+}
+
+void frame_overlay_end(DrawList* dl)
+{
+    if (!dl) return;
+    dl->in_overlay = false;
 }
 
 void frame_rect(DrawList* dl, float x, float y, float w, float h, const float c[4])
