@@ -1,0 +1,30 @@
+# Quill theme -- Gruvbox Dark.
+name = Gruvbox Dark
+
+bg         = #282828
+fg         = #EBDBB2
+gutter_bg  = #1D2021
+gutter_fg  = #928374
+line_hl    = #3C383666
+selection  = #50494566
+cursor     = #FE8019
+status_bg  = #1D2021
+status_fg  = #EBDBB2
+accent     = #83A598
+
+default     = #EBDBB2
+keyword     = #FB4934
+function    = #B8BB26
+string      = #B8BB26
+comment     = #928374
+number      = #D3869B
+type        = #FABD2F
+variable    = #EBDBB2
+operator    = #8EC07C
+punctuation = #A89984
+property    = #83A598
+constant    = #D3869B
+attribute   = #FABD2F
+label       = #FE8019
+escape      = #8EC07C
+error       = #FB4934

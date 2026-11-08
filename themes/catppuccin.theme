@@ -1,0 +1,34 @@
+# Quill theme -- Catppuccin Mocha.
+# Colors are #RRGGBB or #RRGGBBAA (also 0x… or bare hex). A 6-digit form is
+# fully opaque; add two hex digits for alpha. Unknown keys are ignored.
+name = Catppuccin Mocha
+
+# Editor chrome
+bg         = #1E1E2E
+fg         = #CDD6F4
+gutter_bg  = #181825
+gutter_fg  = #6C7086
+line_hl    = #31324455
+selection  = #585B7066
+cursor     = #F5E0DC
+status_bg  = #181825
+status_fg  = #BAC2DE
+accent     = #89B4FA
+
+# Syntax (Tree-sitter capture classes)
+default     = #CDD6F4
+keyword     = #CBA6F7
+function    = #89B4FA
+string      = #A6E3A1
+comment     = #6C7086
+number      = #FAB387
+type        = #F9E2AF
+variable    = #CDD6F4
+operator    = #89DCEB
+punctuation = #9399B2
+property    = #F2CDCD
+constant    = #F38BA8
+attribute   = #F9E2AF
+label       = #FAB387
+escape      = #F5C2E7
+error       = #F38BA8

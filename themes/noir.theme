@@ -1,0 +1,36 @@
+# Quill theme -- Noir (the built-in default).
+# Grayscale/red adaptation of vim-256noir:
+# https://github.com/andreasvc/vim-256noir
+# Colors are #RRGGBB or #RRGGBBAA (also 0x… or bare hex). A 6-digit form is
+# fully opaque; add two hex digits for alpha. Unknown keys are ignored.
+name = Noir
+
+# Editor chrome
+bg         = #000000
+fg         = #BCBCBC
+gutter_bg  = #121212
+gutter_fg  = #585858
+line_hl    = #12121266
+selection  = #30303066
+cursor     = #EEEEEE
+status_bg  = #000000
+status_fg  = #8A8A8A
+accent     = #EEEEEE
+
+# Syntax (Tree-sitter capture classes)
+default     = #BCBCBC
+keyword     = #EEEEEE
+function    = #EEEEEE
+string      = #8A8A8A
+comment     = #585858
+number      = #FF0000
+type        = #EEEEEE
+variable    = #BCBCBC
+operator    = #EEEEEE
+punctuation = #BCBCBC
+property    = #BCBCBC
+constant    = #D0D0D0
+attribute   = #EEEEEE
+label       = #EEEEEE
+escape      = #FF0000
+error       = #FF0000

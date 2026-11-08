@@ -1,0 +1,7 @@
+workload,impl,ns_min,ns_med,cv,chk
+scroll40_view,quill_view,319.41,327.53,0.0555,936000
+scroll40_line,quill_line_text,1022.51,1063.46,0.0652,936000
+frame_static,quill,100048.00,101006.00,0.1142,19761
+frame_scroll,quill,99968.00,113779.00,0.0748,39459
+edit_parse_frame,quill,11893316.00,14458389.00,0.1441,59283
+edit_parse,quill,12154886.00,14422228.00,0.0836,22079568

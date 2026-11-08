@@ -1,0 +1,38 @@
+# Quill theme template. Copy to e.g. my.theme, edit the colors, then point the
+# editor at it:  theme = my.theme   (in quill.conf)   or   quill --theme my.theme
+#
+# Colors: #RRGGBB or #RRGGBBAA (also 0x… or bare hex). A 6-digit value is fully
+# opaque; append two hex digits for alpha (e.g. #31324455). A 3-digit #RGB form
+# is expanded. Only the keys you set are overridden; the rest keep the built-in
+# Catppuccin Mocha default. Unknown keys (like "name") are ignored.
+name = My Theme
+
+# --- Editor chrome ---
+bg         = #1E1E2E   # editor background (also the Vulkan clear color)
+fg         = #CDD6F4   # default text
+gutter_bg  = #181825   # line-number gutter background
+gutter_fg  = #6C7086   # line-number text
+line_hl    = #31324455 # current-line highlight (alpha matters here)
+selection  = #585B7066 # selection background (alpha matters here)
+cursor     = #F5E0DC   # cursor block / trail / VFX base color
+status_bg  = #181825   # status bar, picker panel, search prompt background
+status_fg  = #BAC2DE   # status bar text
+accent     = #89B4FA   # picker selection + search prompt accent
+
+# --- Syntax (Tree-sitter capture classes) ---
+default     = #CDD6F4
+keyword     = #CBA6F7
+function    = #89B4FA
+string      = #A6E3A1
+comment     = #6C7086
+number      = #FAB387
+type        = #F9E2AF
+variable    = #CDD6F4
+operator    = #89DCEB
+punctuation = #9399B2
+property    = #F2CDCD
+constant    = #F38BA8
+attribute   = #F9E2AF
+label       = #FAB387
+escape      = #F5C2E7
+error       = #F38BA8

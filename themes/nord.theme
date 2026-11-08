@@ -1,0 +1,30 @@
+# Quill theme -- Nord.
+name = Nord
+
+bg         = #2E3440
+fg         = #D8DEE9
+gutter_bg  = #272C36
+gutter_fg  = #616E88
+line_hl    = #3B425266
+selection  = #434C5E66
+cursor     = #88C0D0
+status_bg  = #272C36
+status_fg  = #D8DEE9
+accent     = #88C0D0
+
+default     = #D8DEE9
+keyword     = #81A1C1
+function    = #88C0D0
+string      = #A3BE8C
+comment     = #616E88
+number      = #B48EAD
+type        = #8FBCBB
+variable    = #D8DEE9
+operator    = #81A1C1
+punctuation = #ECEFF4
+property    = #8FBCBB
+constant    = #B48EAD
+attribute   = #8FBCBB
+label       = #D08770
+escape      = #EBCB8B
+error       = #BF616A

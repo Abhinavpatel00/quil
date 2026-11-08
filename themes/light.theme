@@ -1,0 +1,31 @@
+# Quill theme -- Rose Pine Dawn (light). Pairs well with a background image
+# and a lowered editor_opacity.
+name = Rose Pine Dawn
+
+bg         = #FAF4ED
+fg         = #575279
+gutter_bg  = #F2E9E1
+gutter_fg  = #9893A5
+line_hl    = #F4EDE8AA
+selection  = #DFDAD9AA
+cursor     = #575279
+status_bg  = #F2E9E1
+status_fg  = #575279
+accent     = #56949F
+
+default     = #575279
+keyword     = #907AA9
+function    = #D7827E
+string      = #EA9D34
+comment     = #9893A5
+number      = #286983
+type        = #56949F
+variable    = #575279
+operator    = #286983
+punctuation = #797593
+property    = #D7827E
+constant    = #B4637A
+attribute   = #907AA9
+label       = #286983
+escape      = #EA9D34
+error       = #B4637A

@@ -1,0 +1,10 @@
+{
+  "name": "quill",
+  "renderer": "vulkan",
+  "buffer": "mu_quill",
+  "language_service": "tree-sitter",
+  "lsp": false,
+  "completion": false,
+  "features": ["syntax", "undo", "selection", "hidpi"],
+  "atlas": { "size": 2048, "format": "R8_UNORM", "subpixel_phases": 4 }
+}
