@@ -21,11 +21,16 @@ A high-performance Vulkan code/text editor backed by **`mu_quill`**, with
   keymaps, help; fuzzy matching, preview, async cancellable jobs.
 - Neovide-style spring scroll/cursor motion, cursor trail, smooth blink, and
   reduced-motion fallback.
+- Optional dramatic camera (`dramatic = true`): parks the cursor at a lead point
+  of the viewport and springs the page toward it on both axes instead of
+  scrolling the minimum distance. Pure scroll policy, opt-in, one branch per
+  frame when off. See `docs/MODAL.md`.
 - 17 combinable cursor VFX modes (Neovide ports + Quill extras).
 - Optional background image (cover/contain/stretch) and editor chrome opacity;
   both are zero-cost when unconfigured. See `docs/APPEARANCE.md`.
 - Custom themes: a loadable palette file replaces the built-in Noir;
-  ships with Catppuccin, Gruvbox, Nord, and a light theme. Zero per-frame cost. See
+  ships with Naysayer, Catppuccin, Dracula, Gruvbox, Nord, Tokyo Night, One Dark,
+  Solarized Dark/Light, and Rosé Pine Dawn. Zero per-frame cost. See
   `docs/THEMES.md`.
 - Session restore: reopens the last buffers with cursor and scroll positions on
   launch; startup/shutdown only. See `docs/SESSION.md`.
@@ -96,6 +101,7 @@ Quill starts in **Normal mode**. See `docs/MODAL.md` for the full keymap.
 | `Space t` | open / focus terminal |
 | `Ctrl-:` | toggle terminal / editor |
 | `Ctrl-\ Ctrl-n` | leave terminal (back to editor) |
+| `Ctrl-Shift-C` / `Ctrl-Shift-V` | copy / paste in terminal |
 | `:` | command palette |
 | `Ctrl-s` | save |
 | `Ctrl-d/u/f/b` | scroll |

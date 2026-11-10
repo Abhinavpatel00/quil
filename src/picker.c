@@ -386,7 +386,7 @@ void picker_open(Picker* p, PickerSource src)
     if (src == PSRC_COMMANDS)
     {
         static const char* cmds[] = {
-            "Save", "Quit", "Toggle Line Numbers", "Zoom In", "Zoom Out",
+            "Save", "Quit", "Toggle Line Numbers", "Dramatic Mode", "Zoom In", "Zoom Out",
             "Find Files", "Buffers", "Live Grep", "Document Symbols",
             "Project Symbols", "Recent Files", "Keymaps", "Help",
             "Cursor VFX: none", "Cursor VFX: railgun", "Cursor VFX: torpedo",

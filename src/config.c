@@ -25,6 +25,10 @@ void config_defaults(MotionConfig* cfg)
     cfg->vfx_phase = 1.5f;
     cfg->vfx_curl = 1.0f;
     cfg->reduced_motion = false;
+    cfg->dramatic = false;
+    cfg->dramatic_lead_x = 0.30f;
+    cfg->dramatic_lead_y = 0.33f;
+    cfg->dramatic_ms = 180u;
     cfg->background_image[0] = 0;
     cfg->background_fit = BG_FIT_COVER;
     cfg->editor_opacity = 1.0f;
@@ -184,6 +188,10 @@ void config_load_file(MotionConfig* cfg, const char* path)
         else if (strcmp(k, "cursor_vfx_particle_phase") == 0 || strcmp(k, "vfx_phase") == 0) cfg->vfx_phase = (float)strtod(v, NULL);
         else if (strcmp(k, "cursor_vfx_particle_curl") == 0 || strcmp(k, "vfx_curl") == 0) cfg->vfx_curl = (float)strtod(v, NULL);
         else if (strcmp(k, "reduced_motion") == 0) cfg->reduced_motion = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
+        else if (strcmp(k, "dramatic") == 0) cfg->dramatic = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
+        else if (strcmp(k, "dramatic_lead_x") == 0) cfg->dramatic_lead_x = clamp01((float)strtod(v, NULL) * 2.0f) * 0.5f;
+        else if (strcmp(k, "dramatic_lead_y") == 0) cfg->dramatic_lead_y = clamp01((float)strtod(v, NULL) * 2.0f) * 0.5f;
+        else if (strcmp(k, "dramatic_ms") == 0) cfg->dramatic_ms = parse_u32(v);
         else if (strcmp(k, "background_image") == 0)
         {
             if (strcmp(v, "none") == 0 || v[0] == 0) cfg->background_image[0] = 0;

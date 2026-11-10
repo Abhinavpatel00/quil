@@ -1,0 +1,32 @@
+# Quill theme -- Tokyo Night.
+# Palette: https://github.com/tokyo-night/tokyo-night-vscode-theme
+name = Tokyo Night
+
+bg         = #1A1B26
+fg         = #A9B1D6
+gutter_bg  = #16161E
+gutter_fg  = #565F89
+line_hl    = #24283B99
+selection  = #41486888
+search     = #E0AF6855
+cursor     = #C0CAF5
+status_bg  = #16161E
+status_fg  = #A9B1D6
+accent     = #7AA2F7
+
+default     = #C0CAF5
+keyword     = #BB9AF7
+function    = #7AA2F7
+string      = #9ECE6A
+comment     = #565F89
+number      = #FF9E64
+type        = #E0AF68
+variable    = #C0CAF5
+operator    = #7DCFFF
+punctuation = #9AA5CE
+property    = #73DACA
+constant    = #FF9E64
+attribute   = #BB9AF7
+label       = #F7768E
+escape      = #E0AF68
+error       = #F7768E

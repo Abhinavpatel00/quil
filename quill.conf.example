@@ -12,6 +12,14 @@ indent_guides = true      # faint rules at each indent stop
 picker_ms = 120
 reduced_motion = false    # true disables scroll/cursor/blink animation
 
+# Dramatic camera: instead of scrolling the minimum distance to keep the cursor
+# on screen, park it at a fixed lead point of the viewport and let the springs
+# carry the page there. One switch, no effect when off.
+dramatic = false          # true | false (opt-in)
+dramatic_lead_x = 0.30    # cursor x as a fraction of the text area (0..0.5)
+dramatic_lead_y = 0.33    # cursor y as a fraction of the viewport (0..0.5)
+dramatic_ms = 180         # camera spring settling time (0 snaps)
+
 # Cursor VFX (Neovide port + Quill extras). Empty/none disables.
 # Multiple modes may be combined with commas, e.g. railgun,ripple.
 cursor_vfx_mode = none            # railgun torpedo pixiedust sonicboom ripple wireframe comet ember aurora glitch pulse snow confetti spark smoke shockwave halo
@@ -43,11 +51,10 @@ background_vignette = 0.0         # 0.0 .. 1.0
 # it). Independent of editor_opacity, which only fades the chrome.
 window_opacity = 1.0              # 0.2 .. 1.0
 
-# Theme: a palette file that replaces the built-in Noir. See
-# themes/*.theme for the format and ready-made palettes (catppuccin,
-# gruvbox-dark, nord, light). Empty/none/default keeps the built-in.
+# Theme: a palette file that replaces the built-in Noir. See docs/THEMES.md
+# for the complete catalog. Empty/none/default keeps the built-in palette.
 # Applied once at load time.
-theme = none                      # e.g. themes/gruvbox-dark.theme
+theme = none                      # e.g. themes/naysayer.theme
 
 # Session restore: reopen the last buffers with their cursor and scroll
 # positions when launched with no file arguments. Saved on exit.

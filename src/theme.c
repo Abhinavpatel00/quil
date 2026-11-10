@@ -132,6 +132,16 @@ bool theme_load_file(const char* path)
         while (end > k && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r'))
             *--end = 0;
         while (*v == ' ' || *v == '\t') v++;
+        /* A '#' starts an inline comment only after whitespace; the leading
+         * '#' in #RRGGBB / #RRGGBBAA is part of the color itself. */
+        for (end = v; *end; ++end)
+        {
+            if (*end == '#' && end > v && (end[-1] == ' ' || end[-1] == '\t'))
+            {
+                *end = 0;
+                break;
+            }
+        }
         end = v + strlen(v);
         while (end > v && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r'))
             *--end = 0;

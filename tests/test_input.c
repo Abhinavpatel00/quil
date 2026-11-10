@@ -25,6 +25,23 @@ static bool palette_open(void)
     return A.picker && A.picker->open && A.picker->source == PSRC_COMMANDS;
 }
 
+static float shaped_width(const char* text, uint32_t len)
+{
+    const ShapedGlyph* glyphs = NULL;
+    uint32_t n = font_shape_line(A.fs, (const uint8_t*)text, len,
+                                 A.params.tab_width, &glyphs);
+    return font_line_x_for_byte(glyphs, n, UINT32_MAX);
+}
+
+/* One frame of scroll animation: params.scroll_x is the *rendered* offset, so
+ * it only reflects a policy change once the view has been advanced. With the
+ * dramatic camera off this is a plain copy from the target. */
+static void advance_a_frame(void)
+{
+    bool active = false;
+    advance_view(&A, 1.0f / 60.0f, &active);
+}
+
 /* Simulate GLFW delivering a ':' typed on an arbitrary physical key. */
 static void type_colon(int physical_key, int mods)
 {
@@ -92,18 +109,98 @@ int main(void)
     app_on_key(&A, GLFW_KEY_S, 0, GLFW_PRESS, GLFW_MOD_CONTROL);
     assert(!palette_open());
 
-    /* 8. Ctrl-: opens the terminal and toggles back to the editor. */
+    /* 8. Ctrl-: toggles in both directions without leaking its ':' char.
+     *    Ctrl+Alt is AltGr: route its layout char to the terminal instead of
+     *    encoding the physical key. Bépo AltGr+X -> '{' is the regression. */
     reset();
     assert(!A.term_active);
-    app_on_key(&A, GLFW_KEY_SEMICOLON, 0, GLFW_PRESS, GLFW_MOD_CONTROL | GLFW_MOD_SHIFT);
-    assert(A.term && A.term_active);
-    app_on_key(&A, GLFW_KEY_SEMICOLON, 0, GLFW_PRESS, GLFW_MOD_CONTROL | GLFW_MOD_SHIFT);
-    assert(A.term && !A.term_active);
-    term_close(&A);
-    assert(!A.term);
+    {
+        const char* script = "build/input_test_shell.sh";
+        FILE* f = fopen(script, "w");
+        uint32_t i;
+        assert(f);
+        fputs("#!/bin/sh\n"
+              "stty -echo\n"
+              "cat\n", f);
+        fclose(f);
+        assert(chmod(script, 0755) == 0);
+        setenv("SHELL", script, 1);
 
-    /* 9. A directory argument starts on an empty buffer and opens the files
-     *    picker rooted at that folder. */
+        app_on_key(&A, GLFW_KEY_SEMICOLON, 0, GLFW_PRESS,
+                   GLFW_MOD_CONTROL | GLFW_MOD_SHIFT);
+        app_on_char(&A, ':'); /* must not become shell input */
+        assert(A.term && A.term_active);
+        for (i = 0u; i < 50u; ++i) { terminal_poll(A.term); usleep(10000); }
+
+        app_on_key(&A, GLFW_KEY_X, 0, GLFW_PRESS,
+                   GLFW_MOD_CONTROL | GLFW_MOD_ALT);
+        app_on_char(&A, '{');
+        app_on_key(&A, GLFW_KEY_X, 0, GLFW_PRESS, 0);
+        app_on_char(&A, 'x');
+        app_on_key(&A, GLFW_KEY_ENTER, 0, GLFW_PRESS, 0);
+        for (i = 0u; i < 300u; ++i)
+        {
+            terminal_poll(A.term);
+            if (terminal_cell_cp(A.term, 0u, 0u) == '{' &&
+                terminal_cell_cp(A.term, 0u, 1u) == 'x') break;
+            usleep(10000);
+        }
+        assert(terminal_cell_cp(A.term, 0u, 0u) == '{');
+        assert(terminal_cell_cp(A.term, 0u, 1u) == 'x');
+        assert(terminal_cell_cp(A.term, 0u, 2u) == 0u);
+
+        app_on_key(&A, GLFW_KEY_SEMICOLON, 0, GLFW_PRESS,
+                   GLFW_MOD_CONTROL | GLFW_MOD_SHIFT);
+        app_on_char(&A, ':'); /* must not open the command palette */
+        assert(A.term && !A.term_active);
+        assert(!palette_open());
+        term_close(&A);
+        assert(!A.term);
+        unlink(script);
+    }
+
+    /* 9. Cursor visibility includes horizontal scrolling. Moving left from a
+     *    long, scrolled line must reveal the previous offscreen character;
+     *    shaped-line measurement accounts for tab expansion. */
+    reset();
+    A.params.width = 100u;
+    A.params.line_numbers = false;
+    A.params.tab_width = QUILL_TAB_WIDTH;
+    {
+        char long_line[161];
+        memset(long_line, 'x', 160u);
+        long_line[160] = '\n';
+        doc_set_text(A.doc, long_line, sizeof long_line);
+        ss_single(&A.ss, 80u);
+        ss_sync_doc(&A.ss, A.doc);
+        A.target_x = A.view_x = A.params.scroll_x = 0.0f;
+        ensure_cursor_visible(&A);
+        advance_a_frame();
+        assert(A.params.scroll_x > 0.0f); /* right edge follows the cursor */
+
+        ss_single(&A.ss, 5u);
+        ss_sync_doc(&A.ss, A.doc);
+        app_on_key(&A, GLFW_KEY_LEFT, 0, GLFW_PRESS, 0);
+        assert(A.ss.c[0].head == 4u);
+        advance_a_frame();
+        assert(quill_fabsf(A.params.scroll_x - shaped_width("xxxx", 4u)) < 0.001f);
+        ss_single(&A.ss, 0u);
+        ss_sync_doc(&A.ss, A.doc);
+        ensure_cursor_visible(&A);
+        advance_a_frame();
+        assert(A.params.scroll_x == 0.0f);
+
+        doc_set_text(A.doc, "\t123456789\n", 11u);
+        ss_single(&A.ss, 1u); /* immediately after the tab */
+        ss_sync_doc(&A.ss, A.doc);
+        A.target_x = A.view_x = A.params.scroll_x = 100.0f;
+        ensure_cursor_visible(&A);
+        advance_a_frame();
+        assert(quill_fabsf(A.params.scroll_x - shaped_width("\t", 1u)) < 0.001f);
+    }
+
+    /* 10. A directory argument starts on an empty buffer and opens the files
+     *     picker rooted at that folder. */
     bm_destroy(&A.bm);
     (void)mkdir("build/test_project_dir", 0755);
     {

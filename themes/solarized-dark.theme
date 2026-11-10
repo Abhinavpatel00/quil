@@ -1,0 +1,32 @@
+# Quill theme -- Solarized Dark.
+# Palette: https://github.com/altercation/solarized
+name = Solarized Dark
+
+bg         = #002B36
+fg         = #839496
+gutter_bg  = #073642
+gutter_fg  = #586E75
+line_hl    = #07364299
+selection  = #586E7566
+search     = #B5890055
+cursor     = #93A1A1
+status_bg  = #073642
+status_fg  = #93A1A1
+accent     = #268BD2
+
+default     = #839496
+keyword     = #859900
+function    = #268BD2
+string      = #2AA198
+comment     = #586E75
+number      = #CB4B16
+type        = #B58900
+variable    = #839496
+operator    = #859900
+punctuation = #93A1A1
+property    = #268BD2
+constant    = #CB4B16
+attribute   = #B58900
+label       = #CB4B16
+escape      = #D33682
+error       = #DC322F

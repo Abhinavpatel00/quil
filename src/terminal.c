@@ -50,6 +50,8 @@ struct Terminal
     TermCell*    scrollback;  /* TERM_SCROLLBACK*cols ring */
     uint32_t     sb_head, sb_count;
     uint32_t     scroll_offset; /* 0 = live; >0 = lines scrolled into history */
+    uint32_t     sel_anchor, sel_cursor; /* inclusive viewport cells: row*cols+col */
+    bool         selection_active;
 
     int          cursor_row, cursor_col;
     bool         cursor_visible;
@@ -344,6 +346,7 @@ void terminal_resize(Terminal* t, uint32_t cols, uint32_t rows)
     if (rows > TERM_MAX_ROWS) rows = TERM_MAX_ROWS;
     if (cols == t->cols && rows == t->rows) return;
     t->cols = cols; t->rows = rows;
+    t->selection_active = false;
     vterm_set_size(t->vt, (int)rows, (int)cols);
     alloc_grid(t);
     if (t->master_fd >= 0)
@@ -407,6 +410,51 @@ void terminal_send_char(Terminal* t, uint32_t codepoint)
     vterm_keyboard_unichar(t->vt, codepoint, VTERM_MOD_NONE);
 }
 
+void terminal_paste(Terminal* t, const char* utf8, size_t len)
+{
+    size_t off = 0u;
+    if (!t || t->exited || !utf8) return;
+    vterm_keyboard_start_paste(t->vt);
+    while (off < len)
+    {
+        const uint8_t* s = (const uint8_t*)utf8;
+        uint8_t c = s[off];
+        uint32_t cp = 0xFFFDu;
+        size_t n = 1u;
+        if (c < 0x80u) cp = c;
+        else if ((c & 0xE0u) == 0xC0u && off + 1u < len &&
+                 (s[off + 1u] & 0xC0u) == 0x80u)
+        {
+            cp = ((uint32_t)(c & 0x1Fu) << 6) | (uint32_t)(s[off + 1u] & 0x3Fu);
+            n = 2u;
+        }
+        else if ((c & 0xF0u) == 0xE0u && off + 2u < len &&
+                 (s[off + 1u] & 0xC0u) == 0x80u && (s[off + 2u] & 0xC0u) == 0x80u)
+        {
+            cp = ((uint32_t)(c & 0x0Fu) << 12) |
+                 ((uint32_t)(s[off + 1u] & 0x3Fu) << 6) |
+                 (uint32_t)(s[off + 2u] & 0x3Fu);
+            n = 3u;
+        }
+        else if ((c & 0xF8u) == 0xF0u && off + 3u < len &&
+                 (s[off + 1u] & 0xC0u) == 0x80u &&
+                 (s[off + 2u] & 0xC0u) == 0x80u &&
+                 (s[off + 3u] & 0xC0u) == 0x80u)
+        {
+            cp = ((uint32_t)(c & 0x07u) << 18) |
+                 ((uint32_t)(s[off + 1u] & 0x3Fu) << 12) |
+                 ((uint32_t)(s[off + 2u] & 0x3Fu) << 6) |
+                 (uint32_t)(s[off + 3u] & 0x3Fu);
+            n = 4u;
+        }
+        off += n;
+        if (cp == '\r' && off < len && s[off] == '\n') off++;
+        if (cp == '\n' || cp == '\r') cp = '\r';
+        vterm_keyboard_unichar(t->vt, cp, VTERM_MOD_NONE);
+    }
+    vterm_keyboard_end_paste(t->vt);
+}
+
 static VTermKey map_key(int k)
 {
     switch (k)
@@ -455,9 +503,40 @@ void terminal_send_key(Terminal* t, int glfw_key, int glfw_mods)
     }
 }
 
+void terminal_select_start(Terminal* t, uint32_t row, uint32_t col)
+{
+    uint32_t cell;
+    if (!t || t->rows == 0u || t->cols == 0u) return;
+    if (row >= t->rows) row = t->rows - 1u;
+    if (col >= t->cols) col = t->cols - 1u;
+    cell = row * t->cols + col;
+    t->sel_anchor = t->sel_cursor = cell;
+    t->selection_active = true;
+}
+
+void terminal_select_extend(Terminal* t, uint32_t row, uint32_t col)
+{
+    if (!t || t->rows == 0u || t->cols == 0u) return;
+    if (!t->selection_active) { terminal_select_start(t, row, col); return; }
+    if (row >= t->rows) row = t->rows - 1u;
+    if (col >= t->cols) col = t->cols - 1u;
+    t->sel_cursor = row * t->cols + col;
+}
+
+void terminal_select_clear(Terminal* t)
+{
+    if (t) t->selection_active = false;
+}
+
+bool terminal_has_selection(const Terminal* t)
+{
+    return t && t->selection_active;
+}
+
 void terminal_scroll(Terminal* t, int lines)
 {
     if (!t) return;
+    if (lines != 0) t->selection_active = false;
     if (lines > 0)
     {
         t->scroll_offset += (uint32_t)lines;
@@ -522,6 +601,54 @@ static const TermCell* viewport_line(const Terminal* t, uint32_t i)
     }
 }
 
+char* terminal_selection_text(const Terminal* t)
+{
+    uint32_t lo, hi, r;
+    size_t cap, at = 0u;
+    bool wrote_row = false;
+    char* out;
+    if (!t || !t->selection_active || t->rows == 0u || t->cols == 0u) return NULL;
+    lo = t->sel_anchor < t->sel_cursor ? t->sel_anchor : t->sel_cursor;
+    hi = t->sel_anchor < t->sel_cursor ? t->sel_cursor : t->sel_anchor;
+    cap = (size_t)t->rows * t->cols * 4u + t->rows + 1u;
+    out = (char*)MU_MALLOC(cap);
+    if (!out) return NULL;
+    for (r = 0u; r < t->rows; ++r)
+    {
+        uint32_t row0 = r * t->cols;
+        uint32_t c0, c1, c;
+        size_t row_start;
+        const TermCell* line;
+        if (row0 > hi || row0 + t->cols - 1u < lo) continue;
+        c0 = row0 < lo ? lo - row0 : 0u;
+        c1 = row0 + t->cols - 1u > hi ? hi - row0 : t->cols - 1u;
+        if (wrote_row) out[at++] = '\n';
+        wrote_row = true;
+        row_start = at;
+        line = viewport_line(t, r);
+        for (c = c0; c <= c1; ++c)
+        {
+            uint32_t cp = line[c].cp;
+            if (line[c].width == 0u) continue;
+            if (cp == 0u || cp == UINT32_MAX || cp < 0x20u) cp = ' ';
+            at += encode_utf8(cp, (uint8_t*)out + at);
+        }
+        while (at > row_start && out[at - 1u] == ' ') at--;
+    }
+    out[at] = 0;
+    return out;
+}
+
+static bool cell_selected(const Terminal* t, uint32_t row, uint32_t col)
+{
+    uint32_t lo, hi, cell;
+    if (!t->selection_active) return false;
+    lo = t->sel_anchor < t->sel_cursor ? t->sel_anchor : t->sel_cursor;
+    hi = t->sel_anchor < t->sel_cursor ? t->sel_cursor : t->sel_anchor;
+    cell = row * t->cols + col;
+    return cell >= lo && cell <= hi;
+}
+
 /* Shape one cell's codepoint and emit it at a fixed grid position. Per-cell
  * shaping (not per-row) so font ligatures never merge adjacent cells. */
 static void draw_cell_glyph(Terminal* t, FontSystem* fs, DrawList* dl,
@@ -579,6 +706,12 @@ void terminal_render(Terminal* t, FontSystem* fs, DrawList* dl,
                 float cb[4];
                 quill_color_linear(TERM_RGBA(cell->bg), cb);
                 frame_rect(dl, cx, ry, cw, lh, cb);
+            }
+            if (cell_selected(t, i, c))
+            {
+                float sel[4];
+                quill_color_linear(QUILL_THEME.selection, sel);
+                frame_rect(dl, cx, ry, cw, lh, sel);
             }
             quill_color_linear(TERM_RGBA(cell->fg), fg);
             draw_cell_glyph(t, fs, dl, cell, cx, ry, baseline, aw, ah, fg);

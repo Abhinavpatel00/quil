@@ -125,6 +125,10 @@ smooth_blink = true
 animate_insert = true
 picker_ms = 120
 reduced_motion = false
+dramatic = false          # opt-in dramatic camera
+dramatic_lead_x = 0.30
+dramatic_lead_y = 0.33
+dramatic_ms = 180
 ```
 
 Motion is Neovide-style rather than a fixed ease from a start time:
@@ -133,6 +137,9 @@ Motion is Neovide-style rather than a fixed ease from a start time:
   Jumps larger than `scroll_far_lines` snap all but the last line, so `gg/G`
   and large wheel jumps stay responsive while short scrolls animate.
 - The frame receives an integer `top_line` plus fractional `scroll_y_offset`.
+- Cursor visibility scrolls both axes: `scroll_x` follows the primary cursor
+  horizontally by the smallest necessary amount, using the renderer's shaped
+  lines so tabs and UTF-8 byte columns land at the correct pixel position.
 - Each cursor rectangle (`x/y/w/h`) is spring-animated, including the
   Insert-bar ↔ Normal-block shape change.
 - Moving cursors emit a short fading trail (`trail_size`, 0 disables).
@@ -142,6 +149,28 @@ Motion is Neovide-style rather than a fixed ease from a start time:
   same amount, preserving screen-relative cursor position.
 - `reduced_motion = true` or `style = instant` snaps scroll/cursor and disables
   blink/trail animation.
+
+### Dramatic camera
+
+`dramatic = true` swaps the scroll *policy* for a camera: instead of scrolling
+the minimum distance needed to reveal the cursor, the view parks the cursor at a
+fixed lead point of the viewport (`dramatic_lead_x` of the text area,
+`dramatic_lead_y` of the viewport) and lets the springs carry the page there, on
+both axes, over `dramatic_ms`. Every cursor move drags the page under a cursor
+that barely appears to move; targets are clamped at the top and left edges and
+at the end of the line, so the first and last screens of a file behave exactly
+as they do without it.
+
+It is a pure scroll policy: it writes the same `target_top` and target `scroll_x`
+the normal path writes, so rendering, hit-testing, selection, and the cursor
+animation need no camera-aware code and the draw list keeps final pixel
+coordinates. Toggle it at runtime with the `Dramatic Mode` palette command.
+
+Off is the zero-overhead path and stays the default: no spring state is
+consulted, no extra primitives are emitted, and the only cost is one predictable
+branch per frame. `test_dramatic` pins both halves down -- the lead park, the
+clamps, spring convergence and reduced-motion snapping when it is on, and
+"view follows target immediately, no spring" when it is off.
 
 The main loop uses `glfwWaitEventsTimeout`: ~4 ms while motion is active,
 ~30 ms for picker/blink, and 100 ms when fully idle. `test_animation` verifies

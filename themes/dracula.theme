@@ -1,0 +1,32 @@
+# Quill theme -- Dracula.
+# Palette: https://github.com/dracula/dracula-theme
+name = Dracula
+
+bg         = #282A36
+fg         = #F8F8F2
+gutter_bg  = #21222C
+gutter_fg  = #6272A4
+line_hl    = #44475A66
+selection  = #44475AAA
+search     = #F1FA8C55
+cursor     = #F8F8F2
+status_bg  = #21222C
+status_fg  = #F8F8F2
+accent     = #BD93F9
+
+default     = #F8F8F2
+keyword     = #FF79C6
+function    = #50FA7B
+string      = #F1FA8C
+comment     = #6272A4
+number      = #BD93F9
+type        = #8BE9FD
+variable    = #F8F8F2
+operator    = #FF79C6
+punctuation = #F8F8F2
+property    = #8BE9FD
+constant    = #BD93F9
+attribute   = #50FA7B
+label       = #FFB86C
+escape      = #FF79C6
+error       = #FF5555

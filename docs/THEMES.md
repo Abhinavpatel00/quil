@@ -12,10 +12,22 @@ Ready-made palettes ship in `themes/`:
 | File | Look |
 |---|---|
 | `themes/noir.theme` | 256noir-inspired grayscale/red (the built-in default) |
+| `themes/naysayer.theme` | Naysayer — dark green-blue, warm tan text, green comments |
 | `themes/catppuccin.theme` | Catppuccin Mocha |
+| `themes/dracula.theme` | Dracula |
 | `themes/gruvbox-dark.theme` | Gruvbox Dark |
 | `themes/nord.theme` | Nord |
+| `themes/tokyo-night.theme` | Tokyo Night |
+| `themes/one-dark.theme` | Atom One Dark |
+| `themes/solarized-dark.theme` | Solarized Dark |
 | `themes/light.theme` | Rosé Pine Dawn (light) |
+| `themes/solarized-light.theme` | Solarized Light |
+
+Naysayer's palette is adapted from
+[RostislavArts/naysayer.nvim](https://github.com/RostislavArts/naysayer.nvim),
+including its `#062625` background, `#D0B892` text, `#53D549` comments, and
+`#3AD0B5` strings. The repository's `quill.conf` selects it by default; use
+`Theme: Default` from the command palette or `theme = none` for built-in Noir.
 
 `theme.conf.example` is an annotated template listing every key.
 
@@ -57,7 +69,7 @@ and VFX.
 
 Config file (`quill.conf`, see `quill.conf.example`):
 ```
-theme = themes/gruvbox-dark.theme
+theme = themes/naysayer.theme
 ```
 
 CLI (both GUI and `--headless`):

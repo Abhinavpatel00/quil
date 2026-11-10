@@ -202,6 +202,8 @@ $(BUILD)/test_terminal.o: tests/test_terminal.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/test_modal_spec.o: tests/test_modal_spec.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
+$(BUILD)/test_dramatic.o: tests/test_dramatic.c | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/test_core: $(BUILD)/test_core.o $(CORE_OBJS) $(TS_OBJS) $(GLFW_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
@@ -226,6 +228,9 @@ $(BUILD)/test_animation: $(BUILD)/test_animation.o $(CORE_OBJS) $(BUILD)/font.o 
 $(BUILD)/test_vfx: $(BUILD)/test_vfx.o $(CORE_OBJS) $(BUILD)/font.o $(BUILD)/frame.o $(MODAL_OBJS) $(TS_OBJS) $(GLFW_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 $(BUILD)/test_input: $(BUILD)/test_input.o $(filter-out $(BUILD)/main.o,$(APP_OBJS)) $(BUILD)/terminal.o $(TS_OBJS) $(VTERM_OBJS) $(GLFW_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BUILD)/test_dramatic: $(BUILD)/test_dramatic.o $(filter-out $(BUILD)/main.o,$(APP_OBJS)) $(BUILD)/terminal.o $(TS_OBJS) $(VTERM_OBJS) $(GLFW_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 $(BUILD)/test_vk: $(BUILD)/test_vk.o $(APP_OBJS) $(TS_OBJS) $(GLFW_DEPS)
 	$(CC) $(CFLAGS) -o $@ $(BUILD)/test_vk.o $(CORE_OBJS) $(BUILD)/font.o $(BUILD)/frame.o $(BUILD)/render_vk.o $(MODAL_OBJS) $(TS_OBJS) $(LDLIBS)
@@ -263,6 +268,7 @@ check: quill $(TEST_BINS)
 	$(BUILD)/test_vk
 	$(BUILD)/test_vfx
 	$(BUILD)/test_input
+	$(BUILD)/test_dramatic
 	$(BUILD)/test_appearance
 	$(BUILD)/test_theme
 	$(BUILD)/test_session
@@ -272,7 +278,7 @@ check: quill $(TEST_BINS)
 	./quill --headless assets/sample.py --screenshot $(BUILD)/python.png --validation
 	sh tests/run_upstream_libvterm.sh
 
-TEST_OBJS := $(BUILD)/test_core.o $(BUILD)/test_syntax.o $(BUILD)/test_c_highlight.o $(BUILD)/test_lang_highlight.o $(BUILD)/test_highlight_cache.o $(BUILD)/test_font.o $(BUILD)/test_frame.o $(BUILD)/test_modal.o $(BUILD)/test_picker.o $(BUILD)/test_animation.o $(BUILD)/test_vfx.o $(BUILD)/test_input.o $(BUILD)/test_vk.o $(BUILD)/test_appearance.o $(BUILD)/test_theme.o $(BUILD)/test_session.o $(BUILD)/test_terminal.o $(BUILD)/test_modal_spec.o
+TEST_OBJS := $(BUILD)/test_core.o $(BUILD)/test_syntax.o $(BUILD)/test_c_highlight.o $(BUILD)/test_lang_highlight.o $(BUILD)/test_highlight_cache.o $(BUILD)/test_font.o $(BUILD)/test_frame.o $(BUILD)/test_modal.o $(BUILD)/test_picker.o $(BUILD)/test_animation.o $(BUILD)/test_vfx.o $(BUILD)/test_input.o $(BUILD)/test_dramatic.o $(BUILD)/test_vk.o $(BUILD)/test_appearance.o $(BUILD)/test_theme.o $(BUILD)/test_session.o $(BUILD)/test_terminal.o $(BUILD)/test_modal_spec.o
 DEPS := $(APP_OBJS:.o=.d) $(TS_OBJS:.o=.d) $(TEST_OBJS:.o=.d) $(BUILD)/terminal.d $(VTERM_OBJS:.o=.d)
 -include $(DEPS)
 
@@ -282,5 +288,5 @@ clean:
 	@# under build/; remove them too so a clean tree really is clean.
 	@rm -f test_core test_syntax test_c_highlight test_lang_highlight \
 	       test_highlight_cache test_font test_frame test_modal test_modal_spec \
-	       test_picker test_animation test_vk test_vfx test_input \
+	       test_picker test_animation test_vk test_vfx test_input test_dramatic \
 	       test_appearance test_theme test_session test_terminal bench_frame

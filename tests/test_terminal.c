@@ -49,6 +49,10 @@ static bool wait_until(Terminal* t, bool (*pred)(Terminal*), int timeout_ms)
 
 static bool got_green(Terminal* t) { return row_is(t, 4u, "GREEN"); }
 static bool got_echo(Terminal* t)  { return row_is(t, 4u, "GREENhi"); }
+static bool got_paste(Terminal* t)
+{
+    return row_is(t, 4u, "GREENhix{") && terminal_cell_cp(t, 4u, 9u) == 0xE9u;
+}
 
 int main(void)
 {
@@ -84,8 +88,23 @@ int main(void)
     terminal_send_char(t, 'i');
     assert(wait_until(t, got_echo, 3000));
 
+    /* Clipboard paste preserves UTF-8 and literal characters. */
+    terminal_paste(t, "x{\xC3\xA9", 4u);
+    assert(wait_until(t, got_paste, 3000));
+
+    /* Mouse selection is inclusive and works in either drag direction. */
+    terminal_select_start(t, 4u, 4u);
+    terminal_select_extend(t, 4u, 1u);
+    assert(terminal_has_selection(t));
+    {
+        char* text = terminal_selection_text(t);
+        assert(text && strcmp(text, "REEN") == 0);
+        MU_FREE(text);
+    }
+
     /* Scrollback: 26 lines scrolled off; scrolling up reveals them. */
     terminal_scroll(t, 5);
+    assert(!terminal_has_selection(t)); /* viewport selection is invalidated */
     assert(terminal_scrolled(t));
     assert(view_row_is(t, 0u, "line22"));
     terminal_scroll(t, -100);

@@ -36,6 +36,7 @@ static void write_theme(const char* path)
           "comment = 778899\n"
           "string = #F00\n"
           "search = #12AB34CD\n"
+          "type = #102030       # inline comment after a color\n"
           "bad_key = #FFFFFF\n"
           "number = notacolor\n", f);
     fclose(f);
@@ -77,6 +78,7 @@ int main(void)
     assert(QUILL_THEME.syntax[QC_COMMENT] == 0x778899FFu); /* bare hex */
     assert(QUILL_THEME.syntax[QC_STRING] == 0xFF0000FFu);  /* #RGB expanded */
     assert(QUILL_THEME.search == 0x12AB34CDu);             /* chrome search slot */
+    assert(QUILL_THEME.syntax[QC_TYPE] == 0x102030FFu);    /* inline comment stripped */
     assert(QUILL_THEME.syntax[QC_NUMBER] == 0xFF0000FFu);  /* invalid -> default */
     assert(QUILL_THEME.gutter_bg == 0x121212FFu);          /* absent -> default */
 
@@ -127,6 +129,44 @@ int main(void)
     QUILL_THEME.bg = 0x112233FFu;
     assert(!theme_load_file("build/does_not_exist.theme"));
     assert(QUILL_THEME.bg == 0x000000FFu);
+
+    /* Every shipped palette must parse successfully and install its own
+     * foreground/background instead of silently retaining Noir defaults. */
+    {
+        static const struct { const char* path; uint32_t bg, fg; } bundled[] = {
+            { "themes/noir.theme",            0x000000FFu, 0xBCBCBCFFu },
+            { "themes/catppuccin.theme",      0x1E1E2EFFu, 0xCDD6F4FFu },
+            { "themes/gruvbox-dark.theme",    0x282828FFu, 0xEBDBB2FFu },
+            { "themes/nord.theme",            0x2E3440FFu, 0xD8DEE9FFu },
+            { "themes/light.theme",           0xFAF4EDFFu, 0x575279FFu },
+            { "themes/naysayer.theme",        0x062625FFu, 0xD0B892FFu },
+            { "themes/dracula.theme",         0x282A36FFu, 0xF8F8F2FFu },
+            { "themes/tokyo-night.theme",     0x1A1B26FFu, 0xA9B1D6FFu },
+            { "themes/one-dark.theme",        0x282C34FFu, 0xABB2BFFFu },
+            { "themes/solarized-dark.theme",  0x002B36FFu, 0x839496FFu },
+            { "themes/solarized-light.theme", 0xFDF6E3FFu, 0x657B83FFu },
+        };
+        uint32_t i;
+        for (i = 0u; i < sizeof bundled / sizeof bundled[0]; ++i)
+        {
+            assert(theme_load_file(bundled[i].path));
+            assert(QUILL_THEME.bg == bundled[i].bg);
+            assert(QUILL_THEME.fg == bundled[i].fg);
+        }
+    }
+
+    /* The annotated template is directly loadable, including inline comments. */
+    assert(theme_load_file("theme.conf.example"));
+    assert(QUILL_THEME.bg == 0x1E1E2EFFu);
+    assert(QUILL_THEME.search == 0xF9E2AF55u);
+
+    /* Naysayer keeps the defining colors from the linked upstream palette. */
+    assert(theme_load_file("themes/naysayer.theme"));
+    assert(QUILL_THEME.syntax[QC_KEYWORD] == 0xFFFFFFFFu);
+    assert(QUILL_THEME.syntax[QC_COMMENT] == 0x53D549FFu);
+    assert(QUILL_THEME.syntax[QC_STRING] == 0x3AD0B5FFu);
+    assert(QUILL_THEME.status_bg == 0xD3B58EFFu);
+    theme_reset();
 
     puts("test_theme: PASS");
     return 0;

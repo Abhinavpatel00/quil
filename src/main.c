@@ -43,6 +43,13 @@ typedef struct App
     float         view_top;
     float         target_top;
     float         scroll_vel;
+    /* Horizontal scroll: target_x is what the scroll policy asks for, view_x
+     * is where the view actually is (they only differ while springing in
+     * dramatic mode), and params.scroll_x is fed the rendered value so the
+     * renderer and hit-testing always agree on what is on screen. */
+    float         target_x;
+    float         view_x;
+    float         scroll_x_vel;
     uint64_t      last_frame_ns;
     bool          animating;
     bool          blink_active;
@@ -55,7 +62,7 @@ typedef struct App
     Terminal*     term;
     bool          term_active;
     bool          term_esc_pending;  /* saw Ctrl-\, waiting for Ctrl-n to exit */
-    bool          term_skip_char;    /* key callback already encoded this char */
+    bool          term_skip_char;    /* key callback handled/suppressed this char */
     char          root[1024];        /* picker root (folder given on the CLI) */
     bool          open_files_on_start; /* root was a directory: show the picker */
 } App;
@@ -122,14 +129,16 @@ static void clamp_scroll(App* a)
     uint32_t max_top = n > rows ? n - rows : 0u;
     if (a->target_top > (float)max_top) a->target_top = (float)max_top;
     if (a->target_top < 0.0f) a->target_top = 0.0f;
-    if (a->params.scroll_x < 0.0f) a->params.scroll_x = 0.0f;
+    if (a->target_x < 0.0f) a->target_x = 0.0f;
+    if (a->view_x < 0.0f) a->view_x = 0.0f;
 }
 
 static void set_target_top(App* a, float top)
 {
     a->target_top = top;
     clamp_scroll(a);
-    if (a->cfg.scroll_ms == 0u || a->cfg.reduced_motion || a->cfg.style == MOTION_INSTANT)
+    if ((a->cfg.dramatic ? a->cfg.dramatic_ms : a->cfg.scroll_ms) == 0u ||
+        a->cfg.reduced_motion || a->cfg.style == MOTION_INSTANT)
     {
         a->view_top = a->target_top;
         a->scroll_vel = 0.0f;
@@ -137,15 +146,120 @@ static void set_target_top(App* a, float top)
     a->redraw = true;
 }
 
-static void ensure_cursor_visible(App* a)
+/* Cursor position within its line, measured with the renderer's own full-line
+ * shaping: c.col is a byte offset, so tabs (which expand to their next stop)
+ * and multi-byte UTF-8 would drift if this multiplied the nominal advance. */
+typedef struct CursorMetrics
+{
+    float x;        /* cursor x inside the line, in pixels */
+    float w;        /* cursor width (bar in Insert, cell in Normal) */
+    float text_x;   /* left edge of the text area (after the gutter) */
+    float text_w;   /* width of the text area */
+} CursorMetrics;
+
+static void cursor_metrics(const App* a, mu_quill_cursor c, CursorMetrics* m)
+{
+    uint8_t line[QUILL_MAX_LINE];
+    uint32_t line_start = mu_quill_line_offset(&a->doc->q, c.line);
+    uint32_t line_end = a->doc->q.text_len;
+    uint32_t len;
+    const ShapedGlyph* glyphs = NULL;
+    uint32_t nglyphs = 0u;
+    m->x = 0.0f;
+    m->text_x = gutter_width(a) + 8.0f;
+    m->text_w = (float)a->params.width > m->text_x ? (float)a->params.width - m->text_x : 0.0f;
+    m->w = a->modal.mode == QMODE_INSERT ? 2.0f : font_advance(a->fs);
+    if (c.line + 1u < a->doc->q.nlines)
+        line_end = mu_quill_line_offset(&a->doc->q, c.line + 1u) - 1u;
+    len = line_end - line_start;
+    if (len > QUILL_MAX_LINE) len = QUILL_MAX_LINE;
+    if (len == 0u) return;
+    mu_quill_text(&a->doc->q, line_start, len, (char*)line);
+    nglyphs = font_shape_line(a->fs, line, len, a->params.tab_width, &glyphs);
+    m->x = font_line_x_for_byte(glyphs, nglyphs, c.col);
+}
+
+/* Dramatic camera: park the cursor at a fixed lead point of the viewport
+ * instead of scrolling the minimum distance needed to reveal it, and let the
+ * existing springs carry the view there. This is only a scroll *policy* -- it
+ * writes the same target_top/scroll_x the normal path writes, so rendering,
+ * hit-testing, selection and the cursor animation need no camera-aware code,
+ * and the renderer's draw list keeps its final pixel coordinates.
+ *
+ * The 1/3 lead is what makes motion read as a camera pan rather than a jump:
+ * every cursor move drags the page under a cursor that barely appears to
+ * move. Clamped targets keep the page pinned at the top/left edges, so the
+ * first and last screens of a file behave exactly like they do without it. */
+static void dramatic_target(App* a)
 {
     const SelCursor* p = ss_primary_const(&a->ss);
     mu_quill_cursor c = mu_quill_offset_to_cursor(&a->doc->q, p->head);
     uint32_t rows = visible_rows(a);
-    float top = a->target_top;
+    CursorMetrics m;
+    float lead_x = a->cfg.dramatic_lead_x;
+    float lead_y = a->cfg.dramatic_lead_y;
+    float top, scroll_x;
+
+    if (lead_x < 0.0f) lead_x = 0.0f;
+    if (lead_x > 0.5f) lead_x = 0.5f;
+    if (lead_y < 0.0f) lead_y = 0.0f;
+    if (lead_y > 0.5f) lead_y = 0.5f;
+
+    top = (float)c.line - (float)rows * lead_y;
+    if (top != a->target_top) set_target_top(a, top);
+    else a->redraw = true;
+
+    cursor_metrics(a, c, &m);
+    scroll_x = m.x - lead_x * m.text_w;
+    if (scroll_x < 0.0f) scroll_x = 0.0f;
+    /* Never scroll past the end of the line: the last character stays at or
+     * left of the right edge so short files do not drift into empty space. */
+    if (scroll_x > m.x + m.w) scroll_x = m.x + m.w;
+    if (scroll_x != a->target_x)
+    {
+        a->target_x = scroll_x;
+        a->redraw = true;
+    }
+}
+
+static void ensure_cursor_visible(App* a)
+{
+    const SelCursor* p;
+    mu_quill_cursor c;
+    uint32_t rows;
+    float top;
+    CursorMetrics m;
+
+    if (a->cfg.dramatic)
+    {
+        dramatic_target(a);
+        return;
+    }
+
+    p = ss_primary_const(&a->ss);
+    c = mu_quill_offset_to_cursor(&a->doc->q, p->head);
+    rows = visible_rows(a);
+    top = a->target_top;
     if ((float)c.line < top) top = (float)c.line;
     else if ((float)c.line >= top + (float)rows) top = (float)c.line - (float)rows + 1.0f;
     if (top != a->target_top) set_target_top(a, top);
+
+    /* Scroll by the smallest amount in either direction, so moving left off
+     * the viewport reveals that character without resetting the whole line. */
+    cursor_metrics(a, c, &m);
+    {
+        float scroll_x = a->target_x;
+        if (m.x < scroll_x)
+            scroll_x = m.x;
+        else if (m.text_w > m.w && m.x + m.w > scroll_x + m.text_w)
+            scroll_x = m.x + m.w - m.text_w;
+        if (scroll_x < 0.0f) scroll_x = 0.0f;
+        if (scroll_x != a->target_x)
+        {
+            a->target_x = scroll_x;
+            a->redraw = true;
+        }
+    }
 }
 
 static void sync_after_edit(App* a)
@@ -161,7 +275,7 @@ static void save_current_view(App* a)
 {
     if (!a->doc) return;
     a->doc->view_top = a->target_top;
-    a->doc->scroll_x = a->params.scroll_x;
+    a->doc->scroll_x = a->target_x;
 }
 
 /* Switch the active buffer, preserving each buffer's own scroll position. */
@@ -174,7 +288,7 @@ static void app_set_doc(App* a, Document* d)
         a->doc = d;
         a->view_top = a->target_top = d->view_top;
         a->scroll_vel = 0.0f;
-        a->params.scroll_x = d->scroll_x;
+        a->target_x = a->view_x = a->params.scroll_x = d->scroll_x;
         clamp_scroll(a);
     }
     ss_from_doc(&a->ss, d);
@@ -282,6 +396,18 @@ static void execute_command(App* a, const char* cmd)
     if (strcmp(cmd, "Save") == 0) doc_save_file(a->doc, NULL);
     else if (strcmp(cmd, "Quit") == 0) { if (a->window) glfwSetWindowShouldClose(a->window, 1); }
     else if (strcmp(cmd, "Toggle Line Numbers") == 0) a->params.line_numbers = !a->params.line_numbers;
+    else if (strcmp(cmd, "Dramatic Mode") == 0)
+    {
+        a->cfg.dramatic = !a->cfg.dramatic;
+        /* Turning it off drops the view exactly where the minimal-scroll
+         * policy expects it, instead of leaving it mid-slide. */
+        if (!a->cfg.dramatic)
+        {
+            a->target_x = a->view_x;
+            a->scroll_x_vel = 0.0f;
+            ensure_cursor_visible(a);
+        }
+    }
     else if (strcmp(cmd, "Zoom In") == 0) { if (a->size_px < 64u) { a->size_px += 2u; font_set_size(a->fs, a->size_px, a->scale); } }
     else if (strcmp(cmd, "Zoom Out") == 0) { if (a->size_px > 8u) { a->size_px -= 2u; font_set_size(a->fs, a->size_px, a->scale); } }
     else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES);
@@ -563,22 +689,69 @@ static bool paste_clipboard(App* a)
     return true;
 }
 
+static bool term_copy_clipboard(App* a)
+{
+    char* text;
+    if (!a->window || !a->term) return false;
+    text = terminal_selection_text(a->term);
+    if (!text) return false;
+    glfwSetClipboardString(a->window, text);
+    MU_FREE(text);
+    a->redraw = true;
+    return true;
+}
+
+static bool term_paste_clipboard(App* a)
+{
+    const char* text;
+    if (!a->window || !a->term) return false;
+    text = glfwGetClipboardString(a->window);
+    if (!text || !text[0]) return false;
+    terminal_paste(a->term, text, strlen(text));
+    a->redraw = true;
+    return true;
+}
+
 static void app_on_key(App* a, int key, int scancode, int action, int mods)
 {
     bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
     bool alt = (mods & GLFW_MOD_ALT) != 0;
+    bool shift = (mods & GLFW_MOD_SHIFT) != 0;
     uint64_t now = app_now_ms();
     (void)scancode;
     if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
 
+    /* GLFW delivers the Unicode character after the key callback. This flag
+     * belongs to that one key event, not to the terminal session: leaving it
+     * set after a chord which produces no char would swallow a later key. */
+    a->term_skip_char = false;
+
     if (a->term_active && a->term)
     {
+        /* Standard terminal clipboard chords. Keep plain Ctrl-C as SIGINT and
+         * plain Ctrl-V as the shell's quoted-insert command. */
+        if ((ctrl && shift && key == GLFW_KEY_C) ||
+            (ctrl && !shift && key == GLFW_KEY_INSERT))
+        {
+            term_copy_clipboard(a);
+            a->term_skip_char = true;
+            return;
+        }
+        if ((ctrl && shift && key == GLFW_KEY_V) ||
+            (shift && !ctrl && !alt && key == GLFW_KEY_INSERT))
+        {
+            term_paste_clipboard(a);
+            a->term_skip_char = true;
+            return;
+        }
         /* Ctrl+: is the terminal toggle. While the terminal is focused it
-         * returns to the editor; the shell keeps running. */
+         * returns to the editor; the shell keeps running. Suppress the ':'
+         * char callback as well, or it would immediately open the palette. */
         if (ctrl && key == GLFW_KEY_SEMICOLON)
         {
             a->term_active = false;
             a->term_esc_pending = false;
+            a->term_skip_char = true;
             a->redraw = true;
             return;
         }
@@ -595,13 +768,13 @@ static void app_on_key(App* a, int key, int scancode, int action, int mods)
         { terminal_scroll(a->term, (int)visible_rows(a)); a->redraw = true; return; }
         if (key == GLFW_KEY_PAGE_DOWN && (mods & GLFW_MOD_SHIFT))
         { terminal_scroll(a->term, -(int)visible_rows(a)); a->redraw = true; return; }
-        /* Plain printable positions defer to the char callback (layout-aware). */
+        /* Plain printable positions defer to the char callback (layout-aware).
+         * Ctrl+Alt is AltGr on many layouts and must defer too: on Bépo, for
+         * example, AltGr+X produces '{', not a physical Ctrl+Alt+X chord.
+         * Plain Ctrl and Alt keep their normal terminal key encodings. */
         if (((key >= GLFW_KEY_SPACE && key <= GLFW_KEY_GRAVE_ACCENT) || key == GLFW_KEY_UNKNOWN)
-            && !ctrl && !alt)
-        {
-            a->term_skip_char = false;
+            && ((!ctrl && !alt) || (ctrl && alt)))
             return;
-        }
         terminal_send_key(a->term, key, mods);
         a->term_skip_char = true;
         return;
@@ -637,7 +810,10 @@ static void app_on_key(App* a, int key, int scancode, int action, int mods)
         case GLFW_KEY_B: { int n = (int)visible_rows(a); modal_scroll(&a->modal, a->doc, &a->ss, -n, visible_rows(a)); set_target_top(a, a->target_top - (float)n); a->redraw = true; return; }
         case GLFW_KEY_EQUAL: case GLFW_KEY_KP_ADD: execute_command(a, "Zoom In"); return;
         case GLFW_KEY_MINUS: case GLFW_KEY_KP_SUBTRACT: execute_command(a, "Zoom Out"); return;
-        case GLFW_KEY_SEMICOLON: term_open(a); return; /* Ctrl+: opens/focuses */
+        case GLFW_KEY_SEMICOLON:
+            term_open(a);
+            a->term_skip_char = true; /* don't type ':' into the new terminal */
+            return;
         default: break;
         }
     }
@@ -684,9 +860,12 @@ static void key_callback(GLFWwindow* w, int key, int scancode, int action, int m
 static void app_on_char(App* a, unsigned int cp)
 {
     uint64_t now = app_now_ms();
+    /* Check this before dispatching to the newly focused view. Ctrl+: can
+     * switch focus between the key and char callbacks; its ':' must go to
+     * neither the shell nor the editor command palette. */
+    if (a->term_skip_char) { a->term_skip_char = false; return; }
     if (a->term_active && a->term)
     {
-        if (a->term_skip_char) { a->term_skip_char = false; return; }
         if (cp < 0x20u) return; /* control chars are encoded by the key callback */
         terminal_send_char(a->term, cp);
         return;
@@ -722,6 +901,21 @@ static void char_callback(GLFWwindow* w, unsigned int cp)
     app_on_char((App*)glfwGetWindowUserPointer(w), cp);
 }
 
+static void term_cell_at_pixel(const App* a, double x, double y,
+                               uint32_t* row, uint32_t* col)
+{
+    float advance = font_advance(a->fs);
+    float lh = font_line_height(a->fs);
+    uint32_t cols = terminal_cols(a->term);
+    uint32_t rows = terminal_rows(a->term);
+    if (advance <= 0.0f) advance = 1.0f;
+    if (lh <= 0.0f) lh = 1.0f;
+    *col = x <= 0.0 ? 0u : (uint32_t)(x / (double)advance);
+    *row = y <= 0.0 ? 0u : (uint32_t)(y / (double)lh);
+    if (*col >= cols) *col = cols - 1u;
+    if (*row >= rows) *row = rows - 1u;
+}
+
 static void mouse_callback(GLFWwindow* w, int button, int action, int mods)
 {
     App* a = (App*)glfwGetWindowUserPointer(w);
@@ -749,6 +943,20 @@ static void mouse_callback(GLFWwindow* w, int button, int action, int mods)
         }
         return;
     }
+    if (a->term_active && a->term)
+    {
+        uint32_t row, col;
+        term_cell_at_pixel(a, x, y, &row, &col);
+        if (action == GLFW_PRESS)
+        {
+            terminal_select_start(a->term, row, col);
+            a->dragging = true;
+        }
+        else if (action == GLFW_RELEASE)
+            a->dragging = false;
+        a->redraw = true;
+        return;
+    }
     off = frame_hit_test(&a->params, a->layouts, a->nlayouts,
                          font_line_height(a->fs), gutter_width(a),
                          (float)x, (float)y + a->params.scroll_y_offset, a->doc);
@@ -773,6 +981,14 @@ static void cursor_callback(GLFWwindow* w, double x, double y)
     App* a = (App*)glfwGetWindowUserPointer(w);
     uint32_t off;
     if (!a->dragging) return;
+    if (a->term_active && a->term)
+    {
+        uint32_t row, col;
+        term_cell_at_pixel(a, x, y, &row, &col);
+        terminal_select_extend(a->term, row, col);
+        a->redraw = true;
+        return;
+    }
     off = frame_hit_test(&a->params, a->layouts, a->nlayouts,
                          font_line_height(a->fs), gutter_width(a),
                          (float)x, (float)y + a->params.scroll_y_offset, a->doc);
@@ -794,7 +1010,10 @@ static void scroll_callback(GLFWwindow* w, double dx, double dy)
     if (lines != 0)
         set_target_top(a, a->target_top + (float)lines);
     if (dx != 0.0)
-        a->params.scroll_x += (float)(dx * font_advance(a->fs));
+    {
+        a->target_x += (float)(dx * font_advance(a->fs));
+        if (a->target_x < 0.0f) a->target_x = 0.0f;
+    }
     clamp_scroll(a);
     a->redraw = true;
 }
@@ -832,6 +1051,64 @@ static void render_search_prompt(App* a)
     (void)fg;
 }
 
+/* Step the view toward its targets. Vertical uses the configured spring;
+ * horizontal only moves at all in dramatic mode, where it uses the same
+ * spring so both axes settle together instead of one lagging the other. */
+static void advance_view(App* a, float dt, bool* scroll_active)
+{
+    uint32_t ms = a->cfg.dramatic ? a->cfg.dramatic_ms : a->cfg.scroll_ms;
+    bool snap = (ms == 0u || a->cfg.reduced_motion || a->cfg.style == MOTION_INSTANT);
+
+    if (!a->cfg.dramatic)
+    {
+        a->view_x = a->target_x;
+        a->scroll_x_vel = 0.0f;
+    }
+    if (snap)
+    {
+        a->view_top = a->target_top;
+        a->scroll_vel = 0.0f;
+        a->view_x = a->target_x;
+        a->scroll_x_vel = 0.0f;
+    }
+    else
+    {
+        float far = (float)a->cfg.scroll_far_lines;
+        float diff = a->target_top - a->view_top;
+        if (far > 0.0f && quill_fabsf(diff) > far)
+        {
+            a->view_top = a->target_top - (diff > 0.0f ? far : -far);
+            a->scroll_vel = 0.0f;
+        }
+        quill_spring_step(&a->view_top, &a->scroll_vel, a->target_top, dt, (float)ms);
+        if (quill_fabsf(a->view_top - a->target_top) < 0.001f && quill_fabsf(a->scroll_vel) < 0.01f)
+        {
+            a->view_top = a->target_top;
+            a->scroll_vel = 0.0f;
+        }
+        else
+            *scroll_active = true;
+
+        if (a->cfg.dramatic)
+        {
+            quill_spring_step(&a->view_x, &a->scroll_x_vel, a->target_x, dt, (float)ms);
+            if (quill_fabsf(a->view_x - a->target_x) < 0.01f && quill_fabsf(a->scroll_x_vel) < 0.1f)
+            {
+                a->view_x = a->target_x;
+                a->scroll_x_vel = 0.0f;
+            }
+            else
+                *scroll_active = true;
+        }
+    }
+    if (a->view_top < 0.0f) a->view_top = 0.0f;
+    if (a->view_x < 0.0f) a->view_x = 0.0f;
+    /* The renderer and hit-testing read params.scroll_x, so it always carries
+     * the rendered offset rather than the target. Outside dramatic mode the
+     * two are the same value, making this a plain copy. */
+    a->params.scroll_x = a->view_x;
+}
+
 static void render_app(App* a)
 {
     uint64_t now = app_now_ms();
@@ -867,31 +1144,7 @@ static void render_app(App* a)
     }
     clamp_scroll(a);
     a->last_frame_ns = now_ns;
-    if (dt < 0.0f) dt = 0.0f;
-    if (a->cfg.scroll_ms == 0u || a->cfg.reduced_motion || a->cfg.style == MOTION_INSTANT)
-    {
-        a->view_top = a->target_top;
-        a->scroll_vel = 0.0f;
-    }
-    else
-    {
-        float far = (float)a->cfg.scroll_far_lines;
-        float diff = a->target_top - a->view_top;
-        if (far > 0.0f && quill_fabsf(diff) > far)
-        {
-            a->view_top = a->target_top - (diff > 0.0f ? far : -far);
-            a->scroll_vel = 0.0f;
-        }
-        quill_spring_step(&a->view_top, &a->scroll_vel, a->target_top, dt, (float)a->cfg.scroll_ms);
-        if (quill_fabsf(a->view_top - a->target_top) < 0.001f && quill_fabsf(a->scroll_vel) < 0.01f)
-        {
-            a->view_top = a->target_top;
-            a->scroll_vel = 0.0f;
-        }
-        else
-            scroll_active = true;
-    }
-    if (a->view_top < 0.0f) a->view_top = 0.0f;
+    advance_view(a, dt, &scroll_active);
     a->params.top_line = (uint32_t)a->view_top;
     a->params.scroll_y_offset = (a->view_top - (float)a->params.top_line) * lh;
     a->params.selections = &a->ss;
@@ -977,7 +1230,7 @@ static bool app_init_doc(App* a, const char* file)
     ss_from_doc(&a->ss, a->doc);
     /* Restore the active buffer's saved scroll (clamped on first render). */
     a->view_top = a->target_top = a->doc->view_top;
-    a->params.scroll_x = a->doc->scroll_x;
+    a->target_x = a->view_x = a->params.scroll_x = a->doc->scroll_x;
     modal_init(&a->modal);
     a->modal.window = a->window;
     a->modal.auto_save_on_mode_change = a->cfg.auto_save_on_mode_change;
@@ -998,6 +1251,7 @@ static int run_headless(int argc, char** argv)
     uint32_t width = 1280u, height = 800u, size = 16u, scale = 1u, top = 0u;
     bool validation = false;
     bool vfx_demo = false;
+    bool dramatic = false, dramatic_set = false;
     int i;
     VkRenderCreateInfo ci;
 
@@ -1013,6 +1267,8 @@ static int run_headless(int argc, char** argv)
         else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) scale = (uint32_t)atoi(argv[++i]);
         else if (strcmp(argv[i], "--top-line") == 0 && i + 1 < argc) top = (uint32_t)atoi(argv[++i]);
         else if (strcmp(argv[i], "--validation") == 0) validation = true;
+        else if (strcmp(argv[i], "--dramatic") == 0) { dramatic = true; dramatic_set = true; }
+        else if (strcmp(argv[i], "--no-dramatic") == 0) { dramatic = false; dramatic_set = true; }
         else if (strcmp(argv[i], "--vfx") == 0 && i + 1 < argc) vfx = argv[++i];
         else if (strcmp(argv[i], "--vfx-demo") == 0) vfx_demo = true;
         else if (strcmp(argv[i], "--background") == 0 && i + 1 < argc) bg = argv[++i];
@@ -1027,6 +1283,9 @@ static int run_headless(int argc, char** argv)
     config_load_file(&a.cfg, cfgpath ? cfgpath : "quill.conf");
     a.cfg.session_restore = false; /* headless screenshots are deterministic */
     if (vfx) a.cfg.vfx_modes = vfx_parse_modes(vfx);
+    /* Screenshots of the camera lead are only reproducible with the mode
+     * explicitly set; otherwise the config file decides. */
+    if (dramatic_set) a.cfg.dramatic = dramatic;
     if (vfx_demo && a.cfg.vfx_modes == VFX_NONE) a.cfg.vfx_modes = VFX_RAILGUN | VFX_RIPPLE;
     /* CLI paths get the same ~ expansion as config paths; relative ones are
      * taken from the current directory, which is what a shell would do. */

@@ -31,6 +31,16 @@ typedef struct MotionConfig
     float       vfx_phase;
     float       vfx_curl;
     bool        reduced_motion;
+    /* Dramatic camera: pins the cursor at a lead point of the viewport and
+     * springs the view toward it instead of scrolling the minimum distance to
+     * keep the cursor on screen. Off by default, and the only cost when off is
+     * one predictable branch per frame -- no extra draw calls, primitives or
+     * allocations. lead_x/lead_y are viewport fractions (0..0.5), dramatic_ms
+     * is the spring length. */
+    bool        dramatic;
+    float       dramatic_lead_x;
+    float       dramatic_lead_y;
+    uint32_t    dramatic_ms;
     /* Appearance. Defaults are the zero-cost path: no image, opacity 1. */
     char        background_image[QUILL_BG_PATH];
     BackgroundFit background_fit;

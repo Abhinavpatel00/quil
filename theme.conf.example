@@ -4,7 +4,7 @@
 # Colors: #RRGGBB or #RRGGBBAA (also 0x… or bare hex). A 6-digit value is fully
 # opaque; append two hex digits for alpha (e.g. #31324455). A 3-digit #RGB form
 # is expanded. Only the keys you set are overridden; the rest keep the built-in
-# Catppuccin Mocha default. Unknown keys (like "name") are ignored.
+# Noir default. Unknown keys (like "name") are ignored.
 name = My Theme
 
 # --- Editor chrome ---
@@ -14,6 +14,7 @@ gutter_bg  = #181825   # line-number gutter background
 gutter_fg  = #6C7086   # line-number text
 line_hl    = #31324455 # current-line highlight (alpha matters here)
 selection  = #585B7066 # selection background (alpha matters here)
+search     = #F9E2AF55 # search-match background (alpha matters here)
 cursor     = #F5E0DC   # cursor block / trail / VFX base color
 status_bg  = #181825   # status bar, picker panel, search prompt background
 status_fg  = #BAC2DE   # status bar text

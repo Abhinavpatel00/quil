@@ -1,0 +1,35 @@
+# Quill theme -- Naysayer.
+# Palette adapted from https://github.com/RostislavArts/naysayer.nvim
+# Upstream: Nick Aversano's Emacs theme; naysayer.nvim is GPL-3+.
+name = Naysayer
+
+# Editor chrome
+bg         = #062625
+fg         = #D0B892
+gutter_bg  = #062625
+gutter_fg  = #126367
+line_hl    = #0B3335AA
+selection  = #0000FF99
+search     = #E6DB7455
+cursor     = #FFFFFF
+status_bg  = #D3B58E
+status_fg  = #12251B
+accent     = #D3B58E
+
+# Syntax (Tree-sitter capture classes)
+default     = #D0B892
+keyword     = #FFFFFF
+function    = #D0B892
+string      = #3AD0B5
+comment     = #53D549
+number      = #87FFDE
+type        = #8CDE94
+variable    = #D0B892
+operator    = #FD971F
+punctuation = #8CDE94
+property    = #D0B892
+constant    = #87FFDE
+attribute   = #8CDE94
+label       = #FD971F
+escape      = #E6DB74
+error       = #FF0000

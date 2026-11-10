@@ -1,0 +1,32 @@
+# Quill theme -- One Dark.
+# Palette adapted from Atom's One Dark syntax theme.
+name = One Dark
+
+bg         = #282C34
+fg         = #ABB2BF
+gutter_bg  = #21252B
+gutter_fg  = #5C6370
+line_hl    = #2C313C99
+selection  = #3E445188
+search     = #E5C07B55
+cursor     = #61AFEF
+status_bg  = #21252B
+status_fg  = #ABB2BF
+accent     = #61AFEF
+
+default     = #ABB2BF
+keyword     = #C678DD
+function    = #61AFEF
+string      = #98C379
+comment     = #5C6370
+number      = #D19A66
+type        = #E5C07B
+variable    = #ABB2BF
+operator    = #56B6C2
+punctuation = #ABB2BF
+property    = #E06C75
+constant    = #D19A66
+attribute   = #E5C07B
+label       = #E06C75
+escape      = #56B6C2
+error       = #E06C75

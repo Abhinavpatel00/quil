@@ -16,9 +16,17 @@ images, or other display-protocol extras.
 | Reopen the running terminal | `<Space>t` or `Ctrl-:` again |
 | Kill the terminal | palette `Terminal: Close` |
 | Scroll back / forward | mouse wheel, or `Shift-PageUp` / `Shift-PageDown` |
+| Select text | left-mouse drag (including scrollback) |
+| Copy selection | `Ctrl-Shift-C` or `Ctrl-Insert` |
+| Paste clipboard | `Ctrl-Shift-V` or `Shift-Insert` |
 
 While the terminal is focused, **every keystroke goes to the shell** (layout-
-aware, like the editor), except `Ctrl-:`, which toggles back to the editor.
+aware, like the editor), except the focus and clipboard shortcuts above. Plain
+`Ctrl-C` still interrupts the running program and plain `Ctrl-V` remains the
+shell's quoted-insert command. Paste uses bracketed paste when enabled by the
+running application.
+AltGr input (reported by GLFW as `Ctrl+Alt`) uses the character produced by the
+active keyboard layout, so mappings such as Bépo `AltGr+X` → `{` work correctly.
 `Ctrl-\ Ctrl-n` is also accepted as the escape hatch back to Normal mode,
 mirroring Neovim. The shell is `$SHELL` (fallback `/bin/sh`) on a real PTY with
 `TERM=xterm-256color`, so colors, full-screen apps (`htop`, `vim`), and resize
@@ -29,6 +37,7 @@ mirroring Neovim. The shell is `$SHELL` (fallback `/bin/sh`) on a real PTY with
 - Text + UTF-8, SGR colors (16 / 256 / truecolor), bold, underline, reverse,
   strikethrough.
 - Cursor movement, erase, scroll regions, alternate screen, bracketed paste.
+- Local mouse selection and UTF-8 clipboard copy/paste.
 - A 2000-line scrollback ring.
 - Window resize propagates to the child (`TIOCSWINSZ`).
 - Default fg/bg follow the active **theme**; the 16 ANSI colors use a standard
