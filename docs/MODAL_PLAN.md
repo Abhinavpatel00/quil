@@ -104,11 +104,11 @@ A multicursor edit is one undo group.
 
 | Register | Meaning |
 |---|---|
-| unnamed `"` | default yank/delete |
+| unnamed `"` | default yank/delete; synced to the system clipboard |
 | `0` | last yank |
 | `a-z` | named registers |
 | `+` / `*` | clipboard |
-| `_` | black hole |
+| `_` | black hole (never touches the clipboard) |
 | `-` | small delete |
 
 Numbered registers and expression registers are deferred.
