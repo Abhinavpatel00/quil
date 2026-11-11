@@ -64,8 +64,11 @@ Implemented register file:
 " 0 a-z + * _ -
 ```
 
-`+` and `*` use the GLFW clipboard when a window exists. The black-hole
-register `_` discards yanks/deletes. Registers are fixed-capacity
+`+` and `*` use the GLFW clipboard when a window exists. The unnamed register
+`"` is synced to the same clipboard on yank/delete, so `yy` / `y` in Visual
+mode puts text into the system clipboard -- including on Wayland -- where it
+can be pasted into other applications. The black-hole register `_` discards
+yanks/deletes without touching the clipboard. Registers are fixed-capacity
 (`QUILL_REG_CAP = 4096`) and stored in `ModalState`.
 
 ## Multicursor

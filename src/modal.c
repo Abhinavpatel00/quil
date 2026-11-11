@@ -482,6 +482,10 @@ static void reg_set(ModalState* m, int reg, const char* text, uint32_t len, bool
         if (m->window) glfwSetClipboardString(m->window, text);
         return;
     }
+    /* The unnamed register mirrors the system clipboard so that yank/delete
+     * (e.g. `yy`, `y` in Visual mode, `dd`, `x`) can be pasted into other
+     * applications -- on Wayland as well as on X11. */
+    if (reg == '"' && len > 0u && m->window) glfwSetClipboardString(m->window, text);
     if (idx >= QUILL_MAX_REGISTERS) return;
     if (len > QUILL_REG_CAP - 1u) len = QUILL_REG_CAP - 1u;
     memcpy(m->reg_data[idx], text, len);
