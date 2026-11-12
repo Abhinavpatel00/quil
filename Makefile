@@ -52,7 +52,7 @@ GLFW_DEPS   :=
 GLFW_USE    :=
 endif
 CFLAGS  := -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -march=native -D_GNU_SOURCE -MMD -MP
-CFLAGS  += -I$(MYLIB) -Isrc -Ithird_party -Ithird_party/tree-sitter -Ithird_party/libvterm/include
+CFLAGS  += -I$(MYLIB) -Isrc -Ithird_party -Ithird_party/mu_lib -Ithird_party/tree-sitter -Ithird_party/libvterm/include
 CFLAGS  += -I$(GLFW_DIR)/include
 CFLAGS  += $(shell $(PKGCONFIG) --cflags freetype2 harfbuzz vulkan)
 LDLIBS := $(shell $(PKGCONFIG) --libs freetype2 harfbuzz vulkan) -lm
@@ -71,7 +71,7 @@ MODAL_OBJS := $(BUILD)/search.o $(BUILD)/selection_set.o $(BUILD)/modal.o \
               $(BUILD)/theme.o $(BUILD)/session.o
 APP_OBJS := $(BUILD)/main.o $(BUILD)/document.o $(BUILD)/syntax.o \
             $(BUILD)/syntax_queries.o $(BUILD)/font.o $(BUILD)/frame.o \
-            $(BUILD)/render_vk.o $(MODAL_OBJS)
+            $(BUILD)/platform.o $(BUILD)/render_vk.o $(MODAL_OBJS)
 CORE_OBJS := $(BUILD)/document.o $(BUILD)/syntax.o $(BUILD)/syntax_queries.o
 GRAMMAR_OBJS := $(BUILD)/c_parser.o $(BUILD)/json_parser.o \
                 $(BUILD)/rust_parser.o $(BUILD)/rust_scanner.o \

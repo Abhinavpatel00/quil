@@ -14,6 +14,7 @@
 #include "terminal.h"
 
 #include <GLFW/glfw3.h>
+#include "platform.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -31,6 +32,7 @@ typedef struct App
     uint32_t      nlayouts;
     FrameParams   params;
     GLFWwindow*   window;
+    Platform      platform; /* mu_input + GLFW backend (adopts `window`) */
     SelectionSet  ss;
     ModalState    modal;
     Picker*       picker;
@@ -353,7 +355,7 @@ static void render_term_status(App* a)
     (void)accent;
 }
 
-static void open_picker_source(App* a, PickerSource src)
+static void open_picker_source(App* a, PickerSource src, uint32_t max_items)
 {
     if (!a->picker)
     {
@@ -377,14 +379,15 @@ static void open_picker_source(App* a, PickerSource src)
     else if (src == PSRC_RECENT)
     {
         PickerItem items[QUILL_MAX_BUFFERS];
-        uint32_t i;
-        for (i = 0u; i < a->bm.nrecent; ++i)
+        uint32_t i, n = a->bm.nrecent;
+        if (max_items != 0u && n > max_items) n = max_items;
+        for (i = 0u; i < n; ++i)
         {
             memset(&items[i], 0, sizeof items[i]);
             snprintf(items[i].label, sizeof items[i].label, "%.250s", a->bm.recent[i]);
             snprintf(items[i].path, sizeof items[i].path, "%s", a->bm.recent[i]);
         }
-        picker_open_items(a->picker, src, items, a->bm.nrecent);
+        picker_open_items(a->picker, src, items, n);
     }
     else
         picker_open(a->picker, src);
@@ -410,8 +413,8 @@ static void execute_command(App* a, const char* cmd)
     }
     else if (strcmp(cmd, "Zoom In") == 0) { if (a->size_px < 64u) { a->size_px += 2u; font_set_size(a->fs, a->size_px, a->scale); } }
     else if (strcmp(cmd, "Zoom Out") == 0) { if (a->size_px > 8u) { a->size_px -= 2u; font_set_size(a->fs, a->size_px, a->scale); } }
-    else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES);
-    else if (strcmp(cmd, "Buffers") == 0) open_picker_source(a, PSRC_BUFFERS);
+    else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES, 0u);
+    else if (strcmp(cmd, "Buffers") == 0) open_picker_source(a, PSRC_BUFFERS, 0u);
     else if (strcmp(cmd, "Live Grep") == 0) open_picker_source(a, PSRC_GREP);
     else if (strcmp(cmd, "Document Symbols") == 0) open_picker_source(a, PSRC_SYMBOLS);
     else if (strcmp(cmd, "Project Symbols") == 0) open_picker_source(a, PSRC_PROJECT_SYMBOLS);
@@ -502,15 +505,15 @@ static void handle_request(App* a)
     a->modal.request = QREQ_NONE;
     switch (r)
     {
-    case QREQ_PICKER_FILES: open_picker_source(a, PSRC_FILES); break;
-    case QREQ_PICKER_BUFFERS: open_picker_source(a, PSRC_BUFFERS); break;
-    case QREQ_PICKER_GREP: open_picker_source(a, PSRC_GREP); break;
-    case QREQ_PICKER_SYMBOLS: open_picker_source(a, PSRC_SYMBOLS); break;
-    case QREQ_PICKER_PROJECT_SYMBOLS: open_picker_source(a, PSRC_PROJECT_SYMBOLS); break;
-    case QREQ_PICKER_RECENT: open_picker_source(a, PSRC_RECENT); break;
-    case QREQ_PICKER_COMMANDS: open_picker_source(a, PSRC_COMMANDS); break;
-    case QREQ_PICKER_KEYMAPS: open_picker_source(a, PSRC_KEYMAPS); break;
-    case QREQ_PICKER_HELP: open_picker_source(a, PSRC_HELP); break;
+    case QREQ_PICKER_FILES: open_picker_source(a, PSRC_FILES, 0u); break;
+    case QREQ_PICKER_BUFFERS: open_picker_source(a, PSRC_BUFFERS, 0u); break;
+    case QREQ_PICKER_GREP: open_picker_source(a, PSRC_GREP, 0u); break;
+    case QREQ_PICKER_SYMBOLS: open_picker_source(a, PSRC_SYMBOLS, 0u); break;
+    case QREQ_PICKER_PROJECT_SYMBOLS: open_picker_source(a, PSRC_PROJECT_SYMBOLS, 0u); break;
+    case QREQ_PICKER_RECENT: open_picker_source(a, PSRC_RECENT, 5u); break; /* top five recents */
+    case QREQ_PICKER_COMMANDS: open_picker_source(a, PSRC_COMMANDS, 0u); break;
+    case QREQ_PICKER_KEYMAPS: open_picker_source(a, PSRC_KEYMAPS, 0u); break;
+    case QREQ_PICKER_HELP: open_picker_source(a, PSRC_HELP, 0u); break;
     case QREQ_SEARCH_FWD:
     case QREQ_SEARCH_REV:
         a->search_open = true;
@@ -842,7 +845,7 @@ static void app_on_key(App* a, int key, int scancode, int action, int mods)
         case GLFW_KEY_X: copy_selection_to_clipboard(a, true); return;
         case GLFW_KEY_V: paste_clipboard(a); return;
         case GLFW_KEY_S: doc_save_file(a->doc, NULL); a->redraw = true; return;
-        case GLFW_KEY_P: open_picker_source(a, PSRC_FILES); return;
+        case GLFW_KEY_P: open_picker_source(a, PSRC_FILES, 0u); return;
         case GLFW_KEY_D: { int n = (int)(visible_rows(a) / 2u); modal_scroll(&a->modal, a->doc, &a->ss, n, visible_rows(a)); set_target_top(a, a->target_top + (float)n); a->redraw = true; return; }
         case GLFW_KEY_U: { int n = (int)(visible_rows(a) / 2u); modal_scroll(&a->modal, a->doc, &a->ss, -n, visible_rows(a)); set_target_top(a, a->target_top - (float)n); a->redraw = true; return; }
         case GLFW_KEY_F: { int n = (int)visible_rows(a); modal_scroll(&a->modal, a->doc, &a->ss, n, visible_rows(a)); set_target_top(a, a->target_top + (float)n); a->redraw = true; return; }
@@ -893,7 +896,12 @@ static void app_on_key(App* a, int key, int scancode, int action, int mods)
 
 static void key_callback(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
-    app_on_key((App*)glfwGetWindowUserPointer(w), key, scancode, action, mods);
+    App* a = (App*)glfwGetWindowUserPointer(w);
+    app_on_key(a, key, scancode, action, mods);
+    /* Feed the same key edge into the mu_input platform state so
+     * platform_key_down()/platform_key_pressed() stay current. */
+    platform_push_key(&a->platform, (uint32_t)(scancode >= 0 ? scancode : key),
+                      action == GLFW_PRESS);
 }
 
 static void app_on_char(App* a, unsigned int cp)
@@ -1533,6 +1541,13 @@ int main(int argc, char** argv)
         return 1;
     }
     glfwSetWindowUserPointer(a.window, &a);
+    if (!platform_init(&a.platform, a.window))
+    {
+        fprintf(stderr, "platform: cannot initialise input backend");
+        glfwDestroyWindow(a.window);
+        glfwTerminate();
+        return 1;
+    }
     glfwGetWindowContentScale(a.window, &xscale, &yscale);
     a.scale = (uint32_t)(xscale > yscale ? xscale : yscale);
     if (a.scale < 1u) a.scale = 1u;
@@ -1574,7 +1589,7 @@ int main(int argc, char** argv)
 
     /* Started on a folder: show the file picker for that folder immediately. */
     if (a.open_files_on_start)
-        open_picker_source(&a, PSRC_FILES);
+        open_picker_source(&a, PSRC_FILES, 0u);
 
     while (!glfwWindowShouldClose(a.window))
     {
@@ -1597,6 +1612,7 @@ int main(int argc, char** argv)
             timeout = a.cfg.smooth_blink ? 0.05
                                          : (double)(a.cfg.blink_ms % 1000u) / 1000.0;
         glfwWaitEventsTimeout(timeout);
+        platform_poll(&a.platform);
         if (a.term_active && a.term && terminal_poll(a.term)) a.redraw = true;
         if (a.picker) picker_poll(a.picker);
         if (a.parse_due && app_now_ms() >= a.parse_due)
@@ -1630,6 +1646,7 @@ int main(int argc, char** argv)
     MU_FREE(a.scratch);
     font_destroy(a.fs);
     bm_destroy(&a.bm);
+    platform_destroy(&a.platform);
     glfwDestroyWindow(a.window);
     glfwTerminate();
     return 0;

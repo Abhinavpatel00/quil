@@ -1371,7 +1371,8 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
     if (m->pending == 1)
     {
         m->pending = 0;
-        if (ch == 'f') { m->pending = 2; return true; } /* leader f prefix */
+        if (ch == ' ') { m->request = QREQ_PICKER_RECENT; return true; } /* leader space -> recent (top five) */
+        if (ch == 'f') { m->request = QREQ_PICKER_FILES; return true; }  /* leader f -> file picker */
         if (ch == 'm') { m->pending = 3; return true; }
         if (ch == 'c') { m->request = QREQ_PICKER_COMMANDS; return true; }
         if (ch == 'k') { m->request = QREQ_PICKER_KEYMAPS; return true; }
@@ -1379,22 +1380,6 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
         if (ch == 't') { m->request = QREQ_TERMINAL; return true; }
         if (ch == 'w') { m->request = QREQ_SAVE; return true; }
         if (ch == 'q') { m->request = QREQ_QUIT; return true; }
-        return true;
-    }
-    if (m->pending == 2)
-    {
-        /* leader f second key */
-        m->pending = 0;
-        switch (ch)
-        {
-        case 'f': m->request = QREQ_PICKER_FILES; break;
-        case 'b': m->request = QREQ_PICKER_BUFFERS; break;
-        case 'g': m->request = QREQ_PICKER_GREP; break;
-        case 's': m->request = QREQ_PICKER_SYMBOLS; break;
-        case 'S': m->request = QREQ_PICKER_PROJECT_SYMBOLS; break;
-        case 'r': m->request = QREQ_PICKER_RECENT; break;
-        default: break;
-        }
         return true;
     }
     if (m->pending == 3)
