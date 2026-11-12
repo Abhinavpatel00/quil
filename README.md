@@ -45,15 +45,22 @@ A high-performance Vulkan code/text editor backed by **`mu_quill`**, with
 ## Build (Debian 13 / Ubuntu)
 
 ```sh
-sudo apt-get install -y build-essential pkg-config \
+sudo apt-get install -y build-essential pkg-config git cmake \
   libvulkan-dev vulkan-tools glslang-tools vulkan-validationlayers \
-  libglfw3-dev libfreetype-dev libharfbuzz-dev libfontconfig-dev libpng-dev \
+  libgl-dev libwayland-dev libxkbcommon-dev wayland-protocols \
+  libfreetype-dev libharfbuzz-dev libfontconfig-dev libpng-dev \
   fonts-jetbrains-mono fonts-noto-core
 
-cd quill
+git clone --recurse-submodules <repo> quill && cd quill
 make -j2
 make check
 ```
+
+`cmake` + `libwayland-dev` + `libxkbcommon-dev` build the vendored GLFW
+(`third_party/glfw`, pinned to 3.4) as a static library; `libgl-dev` is needed
+because GLFW's public header pulls in `GL/gl.h` even for a Vulkan-only app.
+On an existing clone, pull the submodules with `make submodule` (GLFW and
+`mu_lib`); without them the build stops with an explanatory error.
 
 Tree-sitter runtime and grammars are vendored under `third_party/` (MIT).
 The editor links the system Vulkan loader; in a GPU-less sandbox it will use

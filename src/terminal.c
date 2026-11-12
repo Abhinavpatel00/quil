@@ -503,7 +503,7 @@ void terminal_send_key(Terminal* t, int glfw_key, int glfw_mods)
         uint32_t c = 0u;
         bool upper = (mod & VTERM_MOD_SHIFT) != 0u;
         if (glfw_key >= GLFW_KEY_A && glfw_key <= GLFW_KEY_Z)
-            c = (uint32_t)(upper ? glfw_key : glfw_key + 32u);
+            c = upper ? (uint32_t)glfw_key : (uint32_t)(glfw_key + 32);
         else if (glfw_key >= GLFW_KEY_SPACE && glfw_key <= GLFW_KEY_GRAVE_ACCENT)
             c = (uint32_t)glfw_key;
         if (c) vterm_keyboard_unichar(t->vt, c, mod);

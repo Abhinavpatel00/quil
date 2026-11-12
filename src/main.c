@@ -418,12 +418,12 @@ static void execute_command(App* a, const char* cmd)
     else if (strcmp(cmd, "Zoom Out") == 0) { if (a->size_px > 8u) { a->size_px -= 2u; font_set_size(a->fs, a->size_px, a->scale); } }
     else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES, 0u);
     else if (strcmp(cmd, "Buffers") == 0) open_picker_source(a, PSRC_BUFFERS, 0u);
-    else if (strcmp(cmd, "Live Grep") == 0) open_picker_source(a, PSRC_GREP);
-    else if (strcmp(cmd, "Document Symbols") == 0) open_picker_source(a, PSRC_SYMBOLS);
-    else if (strcmp(cmd, "Project Symbols") == 0) open_picker_source(a, PSRC_PROJECT_SYMBOLS);
-    else if (strcmp(cmd, "Recent Files") == 0) open_picker_source(a, PSRC_RECENT);
-    else if (strcmp(cmd, "Keymaps") == 0) open_picker_source(a, PSRC_KEYMAPS);
-    else if (strcmp(cmd, "Help") == 0) open_picker_source(a, PSRC_HELP);
+    else if (strcmp(cmd, "Live Grep") == 0) open_picker_source(a, PSRC_GREP, 0u);
+    else if (strcmp(cmd, "Document Symbols") == 0) open_picker_source(a, PSRC_SYMBOLS, 0u);
+    else if (strcmp(cmd, "Project Symbols") == 0) open_picker_source(a, PSRC_PROJECT_SYMBOLS, 0u);
+    else if (strcmp(cmd, "Recent Files") == 0) open_picker_source(a, PSRC_RECENT, 0u);
+    else if (strcmp(cmd, "Keymaps") == 0) open_picker_source(a, PSRC_KEYMAPS, 0u);
+    else if (strcmp(cmd, "Help") == 0) open_picker_source(a, PSRC_HELP, 0u);
     else if (strncmp(cmd, "Cursor VFX: ", 12u) == 0)
     {
         a->cfg.vfx_modes = vfx_parse_modes(cmd + 12);
@@ -674,7 +674,7 @@ static int clipboard_get(App* a, GLFWwindow* w)
     if (!s) return -1;
     len = (uint32_t)strlen(s);
     if (len == 0u) return -1;
-    return (int)(clipboard_stage(a, s, len) ? len : -1);
+    return clipboard_stage(a, s, len) ? (int)len : -1;
 }
 
 static bool copy_selection_to_clipboard(App* a, bool cut)

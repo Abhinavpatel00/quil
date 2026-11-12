@@ -3,9 +3,12 @@
 
 #include "quill.h"
 
+/* vulkan.h first: GLFW declares its Vulkan entry points (glfwCreateWindowSurface,
+ * glfwGetPhysicalDevicePresentationSupport) only when VK_VERSION_1_0 is already
+ * defined, i.e. when vulkan.h has been seen before glfw3.h. */
+#include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <mu/mu_input.h>
-#include <vulkan/vulkan.h>
 
 /* Thin platform layer over GLFW + mu_lib's mu_input.
  *

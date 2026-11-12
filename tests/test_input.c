@@ -213,7 +213,7 @@ int main(void)
     assert(A.open_files_on_start);
     assert(strcmp(A.root, "build/test_project_dir") == 0);
     assert(A.doc && A.doc->path[0] == 0);
-    open_picker_source(&A, PSRC_FILES);
+    open_picker_source(&A, PSRC_FILES, 0u);
     assert(A.picker && A.picker->open && A.picker->source == PSRC_FILES);
     assert(strcmp(A.picker->root, "build/test_project_dir") == 0);
     {

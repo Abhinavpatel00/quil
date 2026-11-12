@@ -83,8 +83,8 @@ TS_OBJS := $(BUILD)/tree_sitter.o $(GRAMMAR_OBJS)
 # `make` (all: quill) still builds only the editor, and `make check` is the only
 # thing that compiles tests.
 TEST_NAMES := core syntax c_highlight lang_highlight highlight_cache font frame \
-              modal modal_spec picker animation vfx input vk appearance theme \
-              session terminal
+              modal modal_spec picker animation vfx input dramatic vk appearance \
+              theme session terminal
 TEST_BINS  := $(addprefix $(BUILD)/test_,$(TEST_NAMES))
 
 .PHONY: all check clean shaders glfw submodule prune-glfw upstream-vterm

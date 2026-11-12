@@ -30,14 +30,14 @@ int main(void)
 
     /* A. keyboard select (Enter) on the command palette */
     reset();
-    open_picker_source(&A, PSRC_COMMANDS);
+    open_picker_source(&A, PSRC_COMMANDS, 0u);
     assert(A.picker && A.picker->open && A.picker->count > 0u);
     app_on_key(&A, GLFW_KEY_ENTER, 0, GLFW_PRESS, 0);
     printf("A: enter on palette -> open=%d accepted=%d\n", (int)A.picker->open, (int)A.picker->accepted);
 
     /* B. keyboard select on the file picker (async job results) */
     reset();
-    open_picker_source(&A, PSRC_FILES);
+    open_picker_source(&A, PSRC_FILES, 0u);
     for (int i = 0; i < 200 && A.picker->count == 0u; ++i) { picker_poll(A.picker); usleep(5000); }
     printf("B: file results=%u\n", A.picker->count);
     app_on_key(&A, GLFW_KEY_ENTER, 0, GLFW_PRESS, 0);
@@ -45,7 +45,7 @@ int main(void)
 
     /* C. mouse click select on the command palette */
     reset();
-    open_picker_source(&A, PSRC_COMMANDS);
+    open_picker_source(&A, PSRC_COMMANDS, 0u);
     assert(A.picker && A.picker->open && A.picker->count > 0u);
     {
         float lh = font_line_height(A.fs);
@@ -71,7 +71,7 @@ int main(void)
 
     /* D. does anything re-open the picker right after accepting? */
     reset();
-    open_picker_source(&A, PSRC_COMMANDS);
+    open_picker_source(&A, PSRC_COMMANDS, 0u);
     {
         PickerItem* it;
         A.picker->selected = 0u;
