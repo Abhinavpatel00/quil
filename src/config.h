@@ -65,6 +65,13 @@ typedef struct MotionConfig
 void config_defaults(MotionConfig* cfg);
 void config_load_file(MotionConfig* cfg, const char* path);
 
+/* Path used when the user did not pass --config: a ./mu.conf or ./quill.conf
+ * in the current directory, else $XDG_CONFIG_HOME/mu/mu.conf, else
+ * $XDG_CONFIG_HOME/mu/quill.conf (with ~/.config standing in for an unset
+ * XDG_CONFIG_HOME). Returns "mu.conf" when none exists, so a missing default
+ * stays quiet. */
+const char* config_default_path(void);
+
 /* Expand a leading ~, resolve a relative path against `base_dir`, and confirm
  * the file is readable. Returns false if it cannot be resolved. */
 bool config_resolve_path(const char* in, const char* base_dir, char* out, size_t cap);

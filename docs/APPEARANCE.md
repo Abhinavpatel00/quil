@@ -78,7 +78,8 @@ pixel-exact path.
 
 ## Ways to configure
 
-Config file (`quill.conf`, see `quill.conf.example`):
+Config file (`./mu.conf`, `./quill.conf`, or `~/.config/mu/mu.conf`, see
+`quill.conf.example`):
 ```
 background_image = /path/to/wallpaper.png
 background_fit = cover

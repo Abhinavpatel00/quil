@@ -4,6 +4,17 @@ CC      ?= cc
 PKGCONFIG ?= pkg-config
 BUILD := build
 
+# Installation. The default is a per-user install, no sudo needed:
+#   make install        -> ~/.local/bin/mu + ~/.config/mu/{mu.conf,themes}
+#   make install-user   -> same as above (explicit)
+#   sudo make install PREFIX=/usr/local CONFIG=0   -> system binary, no config
+#   sudo make install-system                       -> same as the line above
+# Existing configs are never overwritten; use CONFIG=0 to skip config assets.
+PREFIX ?= $(HOME)/.local
+DESTDIR ?=
+XDG_CONFIG_HOME ?= $(HOME)/.config
+CONFIG ?= 1
+
 # GLFW is vendored as a git submodule (third_party/glfw, pinned to 3.4) and can be
 # linked statically.  Which display backends get compiled in is a build flag, so a
 # Wayland session never carries X11 code and vice versa:
@@ -87,7 +98,8 @@ TEST_NAMES := core syntax c_highlight lang_highlight highlight_cache font frame 
               theme session terminal
 TEST_BINS  := $(addprefix $(BUILD)/test_,$(TEST_NAMES))
 
-.PHONY: all check clean shaders glfw submodule prune-glfw upstream-vterm
+.PHONY: all check clean shaders glfw submodule prune-glfw upstream-vterm \
+        install install-user install-system install-config install-themes uninstall
 
 all: quill
 
@@ -151,6 +163,50 @@ submodule:
 
 quill: $(APP_OBJS) $(BUILD)/terminal.o $(TS_OBJS) $(VTERM_OBJS) $(GLFW_DEPS)
 	$(CC) $(CFLAGS) -o $@ $(APP_OBJS) $(BUILD)/terminal.o $(TS_OBJS) $(VTERM_OBJS) $(LDLIBS)
+
+# --- install ---------------------------------------------------------------
+# Installed as `mu`; a missing config is seeded from quill.conf.example. Themes
+# land next to the config so the example's relative `theme = themes/...` path
+# resolves.
+install: quill
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 quill $(DESTDIR)$(PREFIX)/bin/mu
+	@echo "installed $(DESTDIR)$(PREFIX)/bin/mu"
+	@found=$$(command -v mu 2>/dev/null || true); \
+	if [ -n "$$found" ] && [ "$$found" != "$(DESTDIR)$(PREFIX)/bin/mu" ]; then \
+		echo "warning: 'mu' on PATH is $$found, which shadows this install"; \
+		echo "         remove it or run: sudo make install-system"; \
+	fi
+ifeq ($(CONFIG),1)
+	@if [ -n "$(DESTDIR)" ]; then \
+		echo "DESTDIR set: skipping config (run 'make install-config install-themes' explicitly to stage it)"; \
+	else \
+		$(MAKE) --no-print-directory install-config install-themes; \
+	fi
+endif
+
+install-user: install
+
+install-system:
+	$(MAKE) install PREFIX=/usr/local CONFIG=0
+
+install-config:
+	install -d $(DESTDIR)$(XDG_CONFIG_HOME)/mu
+	@if [ -f "$(DESTDIR)$(XDG_CONFIG_HOME)/mu/mu.conf" ]; then \
+		echo "kept existing $(DESTDIR)$(XDG_CONFIG_HOME)/mu/mu.conf"; \
+	else \
+		install -m 644 quill.conf.example "$(DESTDIR)$(XDG_CONFIG_HOME)/mu/mu.conf"; \
+		echo "installed $(DESTDIR)$(XDG_CONFIG_HOME)/mu/mu.conf"; \
+	fi
+
+install-themes:
+	install -d $(DESTDIR)$(XDG_CONFIG_HOME)/mu/themes
+	install -m 644 themes/*.theme $(DESTDIR)$(XDG_CONFIG_HOME)/mu/themes/
+	@echo "installed themes in $(DESTDIR)$(XDG_CONFIG_HOME)/mu/themes"
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/mu
+	@echo "removed $(DESTDIR)$(PREFIX)/bin/mu (config kept in $(XDG_CONFIG_HOME)/mu)"
 
 shaders: src/spv.h
 

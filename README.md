@@ -15,7 +15,7 @@ A high-performance Vulkan code/text editor backed by **`mu_quill`**, with
 - Incremental Tree-sitter parsing (`ts_tree_edit` + old-tree reparse) and
   visible-range highlight queries. Languages: C, JSON, Rust, Python, JavaScript.
 - Modal editing (Normal/Insert/Visual char/line/block), counts, operators,
-  text objects, registers, dot repeat, and search.
+  text objects, registers, dot repeat, search, and `:w`/`:q`/`:wq` shorthands.
 - Hybrid multicursor selection set with grouped undo (`Ctrl-n`, `Alt-click`).
 - Telescope-like picker: files, buffers, live grep (also seeded with the word
   under the cursor via `Space s w`), symbols, recent, commands, keymaps, help;
@@ -66,6 +66,33 @@ On an existing clone, pull the submodules with `make submodule` (GLFW and
 Tree-sitter runtime and grammars are vendored under `third_party/` (MIT).
 The editor links the system Vulkan loader; in a GPU-less sandbox it will use
 Mesa llvmpipe (software). Any timing from llvmpipe is labelled software.
+
+## Install
+
+```sh
+make install                     # per-user: ~/.local/bin/mu + config
+sudo make install-system         # system-wide /usr/local/bin/mu
+```
+
+If `mu` already exists elsewhere on `PATH` (for example an older
+`/usr/local/bin/mu`), it takes precedence over `~/.local/bin/mu`; `make
+install` warns about this. Overwrite it with `sudo make install-system`, or
+remove the old copy.
+
+`make install` copies the binary to `~/.local/bin/mu` (make sure that
+directory is on your `PATH`) and seeds:
+
+- `~/.config/mu/mu.conf` — your config, copied from `quill.conf.example`
+- `~/.config/mu/themes/` — the bundled themes
+
+An existing `mu.conf` is never overwritten, so it is safe to re-run after
+upgrading. Use `CONFIG=0` to skip the config and themes (`DESTDIR` also skips
+them, for packaging).
+
+Quill reads config from `./mu.conf` or `./quill.conf` first, then
+`$XDG_CONFIG_HOME/mu/mu.conf` (default `~/.config/mu/mu.conf`).
+`--config path` overrides all of them. The session file defaults to
+`~/.config/mu/session`.
 
 ## Run
 

@@ -24,15 +24,15 @@ switch buffers (previously the scroll leaked across switches).
 
 ## Configure
 
-Config file (`quill.conf`, see `quill.conf.example`):
+Config file (`mu.conf`/`quill.conf`, see `quill.conf.example`):
 ```
 session_restore = true
-session_file = ~/.config/quill/session
+session_file = ~/.config/mu/session
 ```
 
 CLI:
 ```
-quill --no-session        # neither restore nor save this run
+mu --no-session        # neither restore nor save this run
 ```
 
 `session_restore = false` disables both saving and restoring. `~` in

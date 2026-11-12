@@ -104,7 +104,7 @@ Space h          help
 Space t          terminal
 Space w          save
 Space q          quit
-:                command palette
+:                command palette (`:w` save, `:q` quit, `:wq` both)
 ```
 
 `<Space>s w` seeds the live grep with the word under the cursor, so the picker
@@ -124,7 +124,8 @@ Picker features:
 
 ## Motion configuration
 
-`quill.conf` (or `--config path`) supports:
+Config (`./mu.conf`, `./quill.conf`, `~/.config/mu/mu.conf`, or
+`--config path`) supports:
 
 ```ini
 style = ease              # ease | linear | instant
@@ -223,7 +224,8 @@ sandbox. GPU screenshots are llvmpipe software renders.
 - Dot repeat is reliable for inserts and simple Normal commands; complex
   operator+motion replay is not fully recorded yet.
 - `W/B/E` are not yet true WORD motions.
-- No Ex command-line parser; `:` opens the command palette.
+- No full Ex command-line parser; `:` opens the command palette, with `:w`,
+  `:q`, and `:wq` shorthands for the common save/quit commands.
 - No macros, marks, jumps, splits, tabs, terminal, expression registers.
 - Picker project-symbol scan parses files sequentially in the worker and is
   capped by `QUILL_PICKER_RESULTS`.

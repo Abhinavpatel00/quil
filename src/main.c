@@ -509,6 +509,11 @@ static void open_picker_grep_word(App* a)
 static void execute_command(App* a, const char* cmd)
 {
     if (strcmp(cmd, "Save") == 0) doc_save_file(a->doc, NULL);
+    else if (strcmp(cmd, "Save and Quit") == 0)
+    {
+        doc_save_file(a->doc, NULL);
+        if (a->window) glfwSetWindowShouldClose(a->window, 1);
+    }
     else if (strcmp(cmd, "Quit") == 0) { if (a->window) glfwSetWindowShouldClose(a->window, 1); }
     else if (strcmp(cmd, "Toggle Line Numbers") == 0) a->params.line_numbers = !a->params.line_numbers;
     else if (strcmp(cmd, "Dramatic Mode") == 0)
@@ -1462,7 +1467,7 @@ static int run_headless(int argc, char** argv)
     /* Headless used to ignore --config entirely, so a config-driven background
      * or theme silently did nothing in screenshots. Load it, then let the CLI
      * flags below override individual keys. */
-    config_load_file(&a.cfg, cfgpath ? cfgpath : "quill.conf");
+    config_load_file(&a.cfg, cfgpath ? cfgpath : config_default_path());
     a.cfg.session_restore = false; /* headless screenshots are deterministic */
     if (vfx) a.cfg.vfx_modes = vfx_parse_modes(vfx);
     /* Screenshots of the camera lead are only reproducible with the mode
@@ -1598,9 +1603,9 @@ int main(int argc, char** argv)
             no_session = true;
         if (strcmp(argv[i], "--help") == 0)
         {
-            printf("quill [file|directory] [--config path] [--theme file] [--no-session]\n"
+            printf("mu [file|directory] [--config path] [--theme file] [--no-session]\n"
                    "      [--background img] [--background-fit cover|contain|stretch] [--editor-opacity 0..1]\n"
-                   "quill --headless [file] --screenshot out.png [--width W --height H] [--size px] [--scale n] [--theme file] [--validation]\n");
+                   "mu --headless [file] --screenshot out.png [--width W --height H] [--size px] [--scale n] [--theme file] [--validation]\n");
             return 0;
         }
         if (argv[i][0] != '-') file = argv[i];
@@ -1608,7 +1613,7 @@ int main(int argc, char** argv)
 
     memset(&a, 0, sizeof a);
     vfx_init(&a.vfx);
-    config_load_file(&a.cfg, cfgpath ? cfgpath : "quill.conf");
+    config_load_file(&a.cfg, cfgpath ? cfgpath : config_default_path());
     if (vfx_cli) a.cfg.vfx_modes = vfx_parse_modes(vfx_cli);
     if (bg_cli &&
         !config_resolve_path(bg_cli, NULL, a.cfg.background_image,

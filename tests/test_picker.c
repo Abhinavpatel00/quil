@@ -93,6 +93,22 @@ int main(void)
     assert(picker_key(&p, GLFW_KEY_ENTER, 0));
     assert(!p.open && p.accepted);
 
+    /* Vim shorthands: exact `:w`, `:q`, `:wq` run the command directly. */
+    picker_open_query(&p, PSRC_COMMANDS, "w");
+    assert(picker_key(&p, GLFW_KEY_ENTER, 0));
+    assert(!p.open && p.accepted);
+    assert(strcmp(p.result.label, "Save") == 0);
+
+    picker_open_query(&p, PSRC_COMMANDS, "q");
+    assert(picker_key(&p, GLFW_KEY_ENTER, 0));
+    assert(!p.open && p.accepted);
+    assert(strcmp(p.result.label, "Quit") == 0);
+
+    picker_open_query(&p, PSRC_COMMANDS, "wq");
+    assert(picker_key(&p, GLFW_KEY_ENTER, 0));
+    assert(!p.open && p.accepted);
+    assert(strcmp(p.result.label, "Save and Quit") == 0);
+
     picker_open(&p, PSRC_FILES);
     for (i = 0u; i < 200u && p.count == 0u; ++i)
     {

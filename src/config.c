@@ -37,7 +37,7 @@ void config_defaults(MotionConfig* cfg)
     cfg->window_opacity = 1.0f;
     cfg->theme[0] = 0;
     cfg->session_restore = true;
-    snprintf(cfg->session_file, sizeof cfg->session_file, "%s", "~/.config/quill/session");
+    snprintf(cfg->session_file, sizeof cfg->session_file, "%s", "~/.config/mu/session");
     cfg->auto_save_on_mode_change = true;
 }
 
@@ -97,6 +97,39 @@ static float clamp01(float v)
     return v;
 }
 
+const char* config_default_path(void)
+{
+    static char path[1024];
+    char xdg_base[1024];
+    const char* xdg = getenv("XDG_CONFIG_HOME");
+    const char* home = getenv("HOME");
+
+    /* A project-local config wins, as before. `mu.conf` is the installed
+     * name; `quill.conf` is kept for existing checkouts. */
+    if (access("mu.conf", R_OK) == 0)
+        return "mu.conf";
+    if (access("quill.conf", R_OK) == 0)
+        return "quill.conf";
+
+    xdg_base[0] = 0;
+    if (xdg && xdg[0])
+        snprintf(xdg_base, sizeof xdg_base, "%s", xdg);
+    else if (home && home[0])
+        snprintf(xdg_base, sizeof xdg_base, "%s/.config", home);
+
+    if (xdg_base[0])
+    {
+        snprintf(path, sizeof path, "%s/mu/mu.conf", xdg_base);
+        if (access(path, R_OK) == 0) return path;
+        snprintf(path, sizeof path, "%s/mu/quill.conf", xdg_base);
+        if (access(path, R_OK) == 0) return path;
+    }
+
+    /* Nothing found: use the installed default so config_load_file() does not
+     * warn about a file the user never created. */
+    return "mu.conf";
+}
+
 void config_load_file(MotionConfig* cfg, const char* path)
 {
     FILE* f;
@@ -121,7 +154,7 @@ void config_load_file(MotionConfig* cfg, const char* path)
          * there. Only complain when the user explicitly named a file. */
         char dflt[1024];
         snprintf(dflt, sizeof dflt, "%s", path);
-        if (strcmp(dflt, "quill.conf") != 0)
+        if (strcmp(dflt, "mu.conf") != 0 && strcmp(dflt, "quill.conf") != 0)
             fprintf(stderr, "config: cannot open '%s' (using defaults)\n", path);
         return;
     }

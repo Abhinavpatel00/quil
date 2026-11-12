@@ -1,4 +1,6 @@
-# Quill motion configuration. Copy to quill.conf or pass --config path.
+# Quill motion configuration.
+# `make install` seeds this at ~/.config/mu/mu.conf. Quill also reads
+# ./mu.conf or ./quill.conf from the current directory, or a --config path.
 # Neovide-style defaults: spring scroll/cursor, cursor trail, smooth blink.
 style = ease              # ease | linear | instant (instant snaps)
 scroll_ms = 300           # scroll spring settling time
@@ -59,4 +61,4 @@ theme = none                      # e.g. themes/naysayer.theme
 # Session restore: reopen the last buffers with their cursor and scroll
 # positions when launched with no file arguments. Saved on exit.
 session_restore = true
-session_file = ~/.config/quill/session
+session_file = ~/.config/mu/session

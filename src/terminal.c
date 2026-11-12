@@ -559,10 +559,16 @@ void terminal_scroll(Terminal* t, int lines)
 /* ---- render ------------------------------------------------------------- */
 
 static void term_emit_glyph(DrawList* dl, float x, float y, const AtlasEntry* e,
-                            const float c[4], uint32_t aw, uint32_t ah)
+                            const float c[4], FontSystem* fs)
 {
     GlyphQuad* q;
+    uint32_t aw, ah;
     if (!e || e->w == 0u || e->h == 0u) return;
+    /* The atlas may grow inside font_atlas_get(); use its current size so the
+     * UVs never sample the wrong glyph region. */
+    aw = font_atlas_width(fs);
+    ah = font_atlas_height(fs);
+    if (aw == 0u || ah == 0u) return;
     if (dl->nglyphs >= QUILL_MAX_GLYPHS) { dl->overflow++; return; }
     q = &dl->glyphs[dl->nglyphs++];
     q->x = x; q->y = y; q->w = (float)e->w; q->h = (float)e->h;
@@ -660,8 +666,7 @@ static bool cell_selected(const Terminal* t, uint32_t row, uint32_t col)
  * shaping (not per-row) so font ligatures never merge adjacent cells. */
 static void draw_cell_glyph(Terminal* t, FontSystem* fs, DrawList* dl,
                             const TermCell* cell, float cx, float ry,
-                            float baseline, uint32_t aw, uint32_t ah,
-                            const float fg[4])
+                            float baseline, const float fg[4])
 {
     uint8_t utf8[4];
     uint32_t len, j, n;
@@ -677,7 +682,7 @@ static void draw_cell_glyph(Terminal* t, FontSystem* fs, DrawList* dl,
         if (!e || (e->w <= 1u && e->h <= 1u)) continue;
         gx = quill_floorf(cx + g[j].x_offset) + (float)e->left;
         gy = ry + baseline - (float)e->top - g[j].y_offset;
-        term_emit_glyph(dl, gx, gy, e, fg, aw, ah);
+        term_emit_glyph(dl, gx, gy, e, fg, fs);
     }
 }
 
@@ -685,13 +690,11 @@ void terminal_render(Terminal* t, FontSystem* fs, DrawList* dl,
                      float x, float y, float w, float h)
 {
     float advance, lh, baseline, bg[4];
-    uint32_t aw, ah, i, c;
+    uint32_t i, c;
     if (!t || !fs || !dl) return;
     advance = font_advance(fs);
     lh = font_line_height(fs);
     baseline = font_baseline(fs);
-    aw = font_atlas_width(fs);
-    ah = font_atlas_height(fs);
 
     quill_color_linear(TERM_RGBA(t->default_bg), bg);
     frame_rect(dl, x, y, w, h, bg);
@@ -721,7 +724,7 @@ void terminal_render(Terminal* t, FontSystem* fs, DrawList* dl,
                 frame_rect(dl, cx, ry, cw, lh, sel);
             }
             quill_color_linear(TERM_RGBA(cell->fg), fg);
-            draw_cell_glyph(t, fs, dl, cell, cx, ry, baseline, aw, ah, fg);
+            draw_cell_glyph(t, fs, dl, cell, cx, ry, baseline, fg);
             if (cell->attrs & TERM_ATTR_UNDERLINE)
                 frame_rect(dl, cx, ry + lh - 2.0f, cw, 1.0f, fg);
             if (cell->attrs & TERM_ATTR_STRIKE)
@@ -742,7 +745,7 @@ void terminal_render(Terminal* t, FontSystem* fs, DrawList* dl,
         quill_color_linear(QUILL_THEME.cursor, cc);
         frame_rect(dl, cx, ry, advance, lh, cc);
         quill_color_linear(TERM_RGBA(t->default_bg), inv);
-        draw_cell_glyph(t, fs, dl, cell, cx, ry, baseline, aw, ah, inv);
+        draw_cell_glyph(t, fs, dl, cell, cx, ry, baseline, inv);
     }
 }
 

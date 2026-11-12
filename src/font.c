@@ -37,8 +37,9 @@ typedef struct ShapeEntry
     uint64_t key;
     uint32_t offset;
     uint32_t count;
-    uint32_t len;        /* source bytes; validated on lookup */
-    uint32_t tab_width;  /* tab expansion used for this shape */
+    uint32_t text_offset; /* source bytes, compared on lookup */
+    uint32_t len;         /* source bytes; validated on lookup */
+    uint32_t tab_width;   /* tab expansion used for this shape */
 } ShapeEntry;
 
 struct FontSystem
@@ -733,7 +734,9 @@ uint32_t font_shape_line(FontSystem* fs, const uint8_t* text, uint32_t len,
     if (mu_hash32_get(&fs->shape_map, key, &idx) && idx != 0u &&
         idx <= fs->nshapes && fs->shapes[idx - 1u].key == key &&
         fs->shapes[idx - 1u].len == len &&
-        fs->shapes[idx - 1u].tab_width == tab_width)
+        fs->shapes[idx - 1u].tab_width == tab_width &&
+        memcmp((const uint8_t*)mu_vm_arena_base(&fs->shape_arena) +
+                   fs->shapes[idx - 1u].text_offset, text, len) == 0)
     {
         se = &fs->shapes[idx - 1u];
         *out = (const ShapedGlyph*)((const uint8_t*)mu_vm_arena_base(&fs->shape_arena) + se->offset);
@@ -764,10 +767,12 @@ uint32_t font_shape_line(FontSystem* fs, const uint8_t* text, uint32_t len,
     }
     if (n == 0u) return 0u;
 
-    /* Upper bound: one glyph per display byte, plus slack for shaping. */
+    /* Upper bound: one glyph per display byte, plus slack for shaping, plus
+     * the source bytes kept for collision-free lookup. */
     cap = n + 16u;
     if (fs->nshapes >= FONT_SHAPE_CAP ||
-        mu_vm_arena_used(&fs->shape_arena) + (size_t)cap * sizeof(ShapedGlyph) > FONT_SHAPE_BYTES)
+        mu_vm_arena_used(&fs->shape_arena) + (size_t)cap * sizeof(ShapedGlyph) +
+            (size_t)len + 16u > FONT_SHAPE_BYTES)
         shape_reset(fs);
 
     glyphs = (ShapedGlyph*)mu_vm_arena_alloc(&fs->shape_arena,
@@ -834,13 +839,22 @@ uint32_t font_shape_line(FontSystem* fs, const uint8_t* text, uint32_t len,
         }
     }
 
-    se = &fs->shapes[fs->nshapes++];
-    se->key = key;
-    se->offset = (uint32_t)((uint8_t*)glyphs - (uint8_t*)mu_vm_arena_base(&fs->shape_arena));
-    se->count = count;
-    se->len = len;
-    se->tab_width = tab_width;
-    mu_hash32_set(&fs->shape_map, key, fs->nshapes);
+    {
+        uint8_t* base = (uint8_t*)mu_vm_arena_base(&fs->shape_arena);
+        uint8_t* src_copy = (uint8_t*)mu_vm_arena_alloc(&fs->shape_arena, len, 1u);
+        if (src_copy)
+        {
+            memcpy(src_copy, text, len);
+            se = &fs->shapes[fs->nshapes++];
+            se->key = key;
+            se->offset = (uint32_t)((uint8_t*)glyphs - base);
+            se->count = count;
+            se->text_offset = (uint32_t)(src_copy - base);
+            se->len = len;
+            se->tab_width = tab_width;
+            mu_hash32_set(&fs->shape_map, key, fs->nshapes);
+        }
+    }
     *out = glyphs;
     return count;
 }

@@ -38,12 +38,19 @@ static void emit_solid(DrawList* dl, float x, float y, float w, float h,
 }
 
 static void emit_glyph(DrawList* dl, float x, float y, const AtlasEntry* e,
-                       const float c[4], uint32_t atlas_w, uint32_t atlas_h)
+                       const float c[4], FontSystem* fs)
 {
     GlyphQuad* q;
     uint32_t*  n;
     GlyphQuad* arr;
+    uint32_t atlas_w, atlas_h;
     if (!e || e->w == 0u || e->h == 0u) return;
+    /* Read the atlas size *now*: font_atlas_get() can grow the atlas while a
+     * frame is being built, and UVs computed with the previous size sample the
+     * wrong region. */
+    atlas_w = font_atlas_width(fs);
+    atlas_h = font_atlas_height(fs);
+    if (atlas_w == 0u || atlas_h == 0u) return;
     if (dl->in_overlay)
     {
         n = &dl->nov_glyphs;
@@ -72,7 +79,6 @@ static void emit_shaped(DrawList* dl, FontSystem* fs, const ShapedGlyph* g,
                         float scroll_x)
 {
     uint32_t i;
-    uint32_t aw = font_atlas_width(fs), ah = font_atlas_height(fs);
     for (i = 0u; i < n; ++i)
     {
         const AtlasEntry* e;
@@ -93,7 +99,7 @@ static void emit_shaped(DrawList* dl, FontSystem* fs, const ShapedGlyph* g,
             continue;
         ci = g[i].cluster < color_len ? color[g[i].cluster] : QC_DEFAULT;
         if (ci >= 16u) ci = QC_DEFAULT;
-        emit_glyph(dl, gx, gy, e, lin[ci], aw, ah);
+        emit_glyph(dl, gx, gy, e, lin[ci], fs);
     }
 }
 
@@ -123,7 +129,6 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
     mu_quill_view view;
     mu_quill_cursor cc;
     uint32_t nl = 0u;
-    uint32_t aw, ah;
     SelectionSet fallback;
     const SelectionSet* ss = p->selections;
     const SelCursor* prim;
@@ -193,8 +198,6 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
     }
     gutter = p->line_numbers ? (float)digits * adv + 2.0f * pad : 0.0f;
     text_x = gutter + pad;
-    aw = font_atlas_width(fs);
-    ah = font_atlas_height(fs);
 
     emit_solid(dl, 0.0f, 0.0f, (float)p->width, (float)p->height, bg);
     if (p->line_numbers)
@@ -362,7 +365,7 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
                     if (!e || (e->w <= 1u && e->h <= 1u)) continue;
                     emit_glyph(dl, gutter - pad - w + nglyphs[j].x_offset,
                                baseline_y - (float)e->top - nglyphs[j].y_offset,
-                               e, gut_fg, aw, ah);
+                               e, gut_fg, fs);
                 }
             }
         }
@@ -560,7 +563,7 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
             if (!e || (e->w <= 1u && e->h <= 1u)) continue;
             emit_glyph(dl, pad + sg[j].x_offset,
                        sy + (status_h - lh) * 0.5f + base - (float)e->top - sg[j].y_offset,
-                       e, chip_fg, aw, ah);
+                       e, chip_fg, fs);
         }
         len = snprintf(scratch->status, sizeof scratch->status, "  %s%s  Ln %u, Col %u  %s  %u cursor%s",
                        d->path[0] ? d->path : "[No Name]", d->dirty ? " *" : "",
@@ -577,7 +580,7 @@ void frame_build(Document* d, FontSystem* fs, const FrameParams* p,
             if (!e || (e->w <= 1u && e->h <= 1u)) continue;
             emit_glyph(dl, chip_w + pad + sg[j].x_offset,
                        sy + (status_h - lh) * 0.5f + base - (float)e->top - sg[j].y_offset,
-                       e, st_fg, aw, ah);
+                       e, st_fg, fs);
         }
     }
 }
@@ -635,7 +638,6 @@ void frame_text(FontSystem* fs, DrawList* dl, const char* text, uint32_t len,
 {
     const ShapedGlyph* g;
     uint32_t n, i;
-    uint32_t aw = font_atlas_width(fs), ah = font_atlas_height(fs);
     n = font_shape_line(fs, (const uint8_t*)text, len, 4u, &g);
     for (i = 0u; i < n; ++i)
     {
@@ -643,6 +645,6 @@ void frame_text(FontSystem* fs, DrawList* dl, const char* text, uint32_t len,
         float gx = x + g[i].x_offset;
         if (!e || (e->w <= 1u && e->h <= 1u)) continue;
         if (gx > clip_x1) break;
-        emit_glyph(dl, gx, baseline_y - (float)e->top - g[i].y_offset, e, c, aw, ah);
+        emit_glyph(dl, gx, baseline_y - (float)e->top - g[i].y_offset, e, c, fs);
     }
 }

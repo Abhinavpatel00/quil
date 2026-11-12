@@ -386,7 +386,7 @@ void picker_open(Picker* p, PickerSource src)
     if (src == PSRC_COMMANDS)
     {
         static const char* cmds[] = {
-            "Save", "Quit", "Toggle Line Numbers", "Dramatic Mode", "Zoom In", "Zoom Out",
+            "Save", "Save and Quit", "Quit", "Toggle Line Numbers", "Dramatic Mode", "Zoom In", "Zoom Out",
             "Find Files", "Buffers", "Live Grep", "Live Grep Word Under Cursor",
             "Document Symbols",
             "Project Symbols", "Recent Files", "Keymaps", "Help",
@@ -413,6 +413,7 @@ void picker_open(Picker* p, PickerSource src)
             "Space s w  grep word under cursor", "Space c  commands",
             "Space k  keymaps", "Space h  help",
             "Space t  terminal", "Space w  save", "Space q  quit",
+            ":w  save", ":q  quit", ":wq  save and quit",
             "Ctrl-n  add next cursor", "Ctrl-Alt-p  remove cursor", "Alt-click  add cursor",
             "i a o I A O  insert", "v V Ctrl-v  visual", "d c y  operators",
             "p P  put", "u Ctrl-r  undo/redo", ".  repeat", "/ ? n N  search",
@@ -556,6 +557,20 @@ void picker_char(Picker* p, unsigned int cp)
     query_changed(p);
 }
 
+/* Vim-style shorthands typed into the `:` command palette. Exact matches run
+ * the command directly, so `:w` saves instead of selecting whatever fuzzy
+ * match happens to be first. */
+static const char* ex_alias(const char* q)
+{
+    if (strcmp(q, "w") == 0 || strcmp(q, "write") == 0 || strcmp(q, "w!") == 0)
+        return "Save";
+    if (strcmp(q, "q") == 0 || strcmp(q, "quit") == 0 || strcmp(q, "q!") == 0)
+        return "Quit";
+    if (strcmp(q, "wq") == 0 || strcmp(q, "x") == 0 || strcmp(q, "xit") == 0)
+        return "Save and Quit";
+    return NULL;
+}
+
 bool picker_key(Picker* p, int key, int mods)
 {
     bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
@@ -567,6 +582,19 @@ bool picker_key(Picker* p, int key, int mods)
     }
     if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER)
     {
+        const char* alias = p->source == PSRC_COMMANDS ? ex_alias(p->query) : NULL;
+        if (alias)
+        {
+            snprintf(p->result.label, sizeof p->result.label, "%s", alias);
+            p->result.path[0] = 0;
+            p->result.line = 0u;
+            p->result.offset = 0u;
+            p->result.score = 0;
+            p->result.kind = 0u;
+            p->accepted = true;
+            p->open = false;
+            return true;
+        }
         if (p->count > 0u)
         {
             p->result = p->items[p->selected];

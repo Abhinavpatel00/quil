@@ -55,14 +55,14 @@ int main(void)
         rbrace_glyph = g[0].glyph;
         assert(lbrace_glyph != x_glyph && rbrace_glyph != x_glyph);
         assert(lbrace_glyph != rbrace_glyph);
-        /* A terminal cell must keep its own glyph... */
-        n = font_shape_line(fs, (const uint8_t*)"x", 1u, 1u, &g);
-        assert(n == 1u);
-        assert(g[0].glyph == x_glyph);
-        /* ...and a '{' must never inherit the cached '}' shape. */
+        /* A '{' must never inherit the cached '}' shape... */
         n = font_shape_line(fs, (const uint8_t*)"{", 1u, 2u, &g);
         assert(n == 1u);
         assert(g[0].glyph == lbrace_glyph);
+        /* ...and a terminal cell must keep its own glyph. */
+        n = font_shape_line(fs, (const uint8_t*)"x", 1u, 1u, &g);
+        assert(n == 1u);
+        assert(g[0].glyph == x_glyph);
     }
 
     n = font_shape_line(fs, (const uint8_t*)"a\tb", 3u, 4u, &g);
