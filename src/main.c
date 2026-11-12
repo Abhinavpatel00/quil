@@ -67,6 +67,9 @@ typedef struct App
     bool          term_skip_char;    /* key callback handled/suppressed this char */
     char          root[1024];        /* picker root (folder given on the CLI) */
     bool          open_files_on_start; /* root was a directory: show the picker */
+    /* Reusable clipboard buffer: copy/paste stage through here instead of
+     * malloc/free on every operation. */
+    char          clipboard_buf[QUILL_CLIPBOARD_CAP];
 } App;
 
 static const char SAMPLE_C[] =
@@ -629,8 +632,26 @@ static void set_ranges_for_clipboard(App* a, const uint32_t* starts, const uint3
 
 /* ---- clipboard ---------------------------------------------------------- */
 
-/* Set the system clipboard. Guarded so we never call GLFW with a NULL
- * window or a NULL string. On Wayland this goes through
+/* Copy `len` bytes of `src` (NUL-terminated) into the reusable clipboard
+ * buffer, discarding whatever was there before. No malloc is involved.
+ * Returns a NUL-terminated pointer into a->clipboard_buf, or NULL if `src`
+ * is NULL. The buffer is reused on every call, so the previous content is
+ * simply overwritten -- no allocator latency on copy or paste.
+ *
+ * `glfwSetClipboardString` copies the string internally (on Wayland it keeps
+ * a local mirror via wl_data_source), so the staged buffer only needs to be
+ * valid during this call. */
+static const char* clipboard_stage(App* a, const char* src, uint32_t len)
+{
+    if (!src) return NULL;
+    if (len >= QUILL_CLIPBOARD_CAP) len = QUILL_CLIPBOARD_CAP - 1u;
+    memcpy(a->clipboard_buf, src, len);
+    a->clipboard_buf[len] = '\0';
+    return a->clipboard_buf;
+}
+
+/* Set the system clipboard from a NUL-terminated string. Guarded so we never
+ * call GLFW with a NULL window or a NULL string. On Wayland this goes through
  * wl_data_device_set_selection, which requires a valid event serial; all
  * call sites are inside key/button callbacks so a serial is current. */
 static bool clipboard_set(GLFWwindow* w, const char* text)
@@ -640,34 +661,26 @@ static bool clipboard_set(GLFWwindow* w, const char* text)
     return true;
 }
 
-/* Copy clipboard text into a freshly allocated buffer (caller MU_FREE's it).
- * Returns byte length, or -1 if unavailable. Copying immediately avoids a
- * use-after-free: glfwGetClipboardString() points at GLFW-internal storage
- * that is freed on the next clipboard-set call. */
-static int clipboard_get_alloc(GLFWwindow* w, char** out)
+/* Copy the system clipboard contents into the reusable buffer (no malloc).
+ * Returns byte length, or -1 if unavailable/empty. Copies immediately to
+ * avoid a use-after-free: glfwGetClipboardString() points at GLFW-internal
+ * storage that is freed on the next clipboard-set call. */
+static int clipboard_get(App* a, GLFWwindow* w)
 {
     const char* s;
     uint32_t len;
-    char* buf;
-    if (!w || !out) return -1;
-    *out = NULL;
+    if (!w) return -1;
     s = glfwGetClipboardString(w);
     if (!s) return -1;
     len = (uint32_t)strlen(s);
     if (len == 0u) return -1;
-    buf = (char*)MU_MALLOC(len + 1u);
-    if (!buf) return -1;
-    memcpy(buf, s, len + 1u);
-    *out = buf;
-    return (int)len;
+    return (int)(clipboard_stage(a, s, len) ? len : -1);
 }
 
 static bool copy_selection_to_clipboard(App* a, bool cut)
 {
     uint32_t starts[QUILL_MAX_CURSORS], ends[QUILL_MAX_CURSORS];
-    uint32_t total = 0u, i;
-    char* data;
-    uint32_t at = 0u;
+    uint32_t total = 0u, i, at = 0u;
 
     if (!a->window) return false;
     if (a->ss.count == 0u) return false;
@@ -689,18 +702,36 @@ static bool copy_selection_to_clipboard(App* a, bool cut)
         total += ends[i] - starts[i];
     }
 
-    data = (char*)MU_MALLOC((size_t)total + 1u);
-    if (!data) return false;
-    for (i = 0u; i < a->ss.count; ++i)
+    if (total < QUILL_CLIPBOARD_CAP)
     {
-        uint32_t len = ends[i] - starts[i];
-        if (i > 0u) data[at++] = '\n';
-        mu_quill_text(&a->doc->q, starts[i], len, data + at);
-        at += len;
+        /* Fast path: stage into the reusable buffer, no heap at all. */
+        for (i = 0u; i < a->ss.count; ++i)
+        {
+            uint32_t len = ends[i] - starts[i];
+            if (i > 0u) a->clipboard_buf[at++] = '\n';
+            mu_quill_text(&a->doc->q, starts[i], len, a->clipboard_buf + at);
+            at += len;
+        }
+        a->clipboard_buf[at] = '\0';
+        clipboard_set(a->window, a->clipboard_buf);
     }
-    data[at] = 0;
-    clipboard_set(a->window, data);
-    MU_FREE(data);
+    else
+    {
+        /* Rare path: a single copy larger than the reusable buffer.
+         * Allocate once instead of silently truncating. */
+        char* data = (char*)MU_MALLOC((size_t)total + 1u);
+        if (!data) return false;
+        for (i = 0u; i < a->ss.count; ++i)
+        {
+            uint32_t len = ends[i] - starts[i];
+            if (i > 0u) data[at++] = '\n';
+            mu_quill_text(&a->doc->q, starts[i], len, data + at);
+            at += len;
+        }
+        data[at] = '\0';
+        clipboard_set(a->window, data);
+        MU_FREE(data);
+    }
     if (cut)
     {
         set_ranges_for_clipboard(a, starts, ends);
@@ -713,17 +744,12 @@ static bool copy_selection_to_clipboard(App* a, bool cut)
 
 static bool paste_clipboard(App* a)
 {
-    char* s;
     int len;
     if (!a->window) return false;
-    len = clipboard_get_alloc(a->window, &s);
+    len = clipboard_get(a, a->window);
     if (len < 0) return false;
-    if (!ss_replace_all(&a->ss, a->doc, s, (uint32_t)len, app_now_ms()))
-    {
-        MU_FREE(s);
+    if (!ss_replace_all(&a->ss, a->doc, a->clipboard_buf, (uint32_t)len, app_now_ms()))
         return false;
-    }
-    MU_FREE(s);
     sync_after_edit(a);
     a->redraw = true;
     return true;
@@ -735,7 +761,7 @@ static bool term_copy_clipboard(App* a)
     if (!a->window || !a->term) return false;
     text = terminal_selection_text(a->term);
     if (!text) return false;
-    clipboard_set(a->window, text);
+    clipboard_set(a->window, clipboard_stage(a, text, (uint32_t)strlen(text)));
     MU_FREE(text);
     a->redraw = true;
     return true;
@@ -743,13 +769,11 @@ static bool term_copy_clipboard(App* a)
 
 static bool term_paste_clipboard(App* a)
 {
-    char* text;
     int len;
     if (!a->window || !a->term) return false;
-    len = clipboard_get_alloc(a->window, &text);
+    len = clipboard_get(a, a->window);
     if (len < 0) return false;
-    terminal_paste(a->term, text, (size_t)len);
-    MU_FREE(text);
+    terminal_paste(a->term, a->clipboard_buf, (size_t)len);
     a->redraw = true;
     return true;
 }

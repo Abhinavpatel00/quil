@@ -47,6 +47,11 @@
 #define QUILL_PICKER_RESULTS 1024u
 #define QUILL_PICKER_FILES  20000u
 #define QUILL_MAX_BUFFERS   64u
+/* Reusable clipboard buffer. Copy/paste stages through this instead of
+ * malloc/free on every operation, so yanking or pasting does not touch the
+ * heap (and therefore has no allocator latency) for any reasonably-sized
+ * selection. A single copy larger than this cap falls back to one malloc. */
+#define QUILL_CLIPBOARD_CAP 262144u /* 256 KiB */
 /* VFX quad budget and per-mode particle cap.
  *
  * These are coupled: the old pair (MAX_VFX 4096, VFX_POOL 512) could not
