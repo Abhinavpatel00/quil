@@ -59,6 +59,7 @@ void picker_init(Picker* p, Document* doc, const char* root);
 void picker_destroy(Picker* p);
 void picker_set_doc(Picker* p, Document* doc);
 void picker_open(Picker* p, PickerSource src);
+void picker_open_query(Picker* p, PickerSource src, const char* query);
 void picker_open_items(Picker* p, PickerSource src, const PickerItem* items, uint32_t n);
 void picker_close(Picker* p);
 void picker_poll(Picker* p);

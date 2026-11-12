@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <ctype.h>
 
 typedef struct App
 {
@@ -358,14 +359,107 @@ static void render_term_status(App* a)
     (void)accent;
 }
 
-static void open_picker_source(App* a, PickerSource src, uint32_t max_items)
+static void open_picker_source_items(App* a, Picker* picker, PickerSource src, uint32_t max_items);
+
+static Picker* ensure_picker(App* a)
 {
     if (!a->picker)
     {
         a->picker = (Picker*)MU_CALLOC(1u, sizeof *a->picker);
-        if (!a->picker) return;
+        if (!a->picker) return NULL;
         picker_init(a->picker, a->doc, a->root[0] ? a->root : NULL);
     }
+    return a->picker;
+}
+
+static bool is_word_byte(uint8_t c)
+{
+    if (c >= 0x80u) return true; /* non-ASCII bytes belong to the word */
+    return c == '_' || isalnum((int)c) != 0;
+}
+
+static bool doc_byte_at(const Document* d, uint32_t off, uint8_t* out)
+{
+    if (off >= d->q.text_len) return false;
+    mu_quill_text(&d->q, off, 1u, (char*)out);
+    return true;
+}
+
+/* Seed for Space s w: the word under the primary cursor, or the visual
+ * selection when there is one (so a selected identifier, or a phrase, can be
+ * grepped as-is). The result is trimmed, single-line and literal -- the picker
+ * grep is a case-insensitive substring search, not a regex -- so nothing needs
+ * escaping. Returns false when there is nothing useful to search for. */
+static bool word_under_cursor(App* a, char* out, size_t cap)
+{
+    const SelCursor* p;
+    uint32_t start, end;
+    uint8_t left = 0u, right = 0u;
+    size_t len, skip;
+
+    if (!a->doc || cap < 2u) return false;
+    out[0] = 0;
+    p = ss_primary_const(&a->ss);
+
+    if (ss_min(p) != ss_max(p) || (a->modal.mode == QMODE_VISUAL && p->anchor != p->head))
+    {
+        start = ss_min(p);
+        end = ss_max(p);
+        /* Visual char mode is inclusive of the head character. */
+        if (a->modal.mode == QMODE_VISUAL && end < a->doc->q.text_len) end++;
+    }
+    else
+    {
+        uint32_t anchor = p->head;
+        /* quill_word_range() only reports the byte *before* a cursor that sits
+         * on whitespace, punctuation or the end of the line, so resolve the
+         * word from the word byte itself: the one under the cursor, else the
+         * one it sits just past. In a blank column there is no word at all and
+         * Space s w opens a plain grep prompt instead of searching for a
+         * single stray character. */
+        if (!(doc_byte_at(a->doc, p->head, &right) && is_word_byte(right)))
+        {
+            if (p->head == 0u) return false;
+            if (!doc_byte_at(a->doc, p->head - 1u, &left) || !is_word_byte(left)) return false;
+            anchor = p->head - 1u;
+        }
+        quill_word_range(a->doc, anchor, &start, &end);
+        if (end <= start) return false;
+    }
+
+    len = end - start;
+    if (len > cap - 1u) len = cap - 1u;
+    mu_quill_text(&a->doc->q, start, (uint32_t)len, out);
+    out[len] = 0;
+
+    /* Grep is line oriented: stop at the first line break. */
+    for (skip = 0u; skip < len; ++skip)
+        if (out[skip] == '\n' || out[skip] == '\r') { out[skip] = 0; len = skip; break; }
+    /* Trim the blanks a selection may carry on either edge. */
+    while (len > 0u && isspace((unsigned char)out[len - 1u])) out[--len] = 0;
+    skip = 0u;
+    while (skip < len && isspace((unsigned char)out[skip])) skip++;
+    if (skip > 0u) memmove(out, out + skip, len - skip + 1u);
+    return out[0] != 0;
+}
+
+static void open_picker_source(App* a, PickerSource src, uint32_t max_items)
+{
+    Picker* picker = ensure_picker(a);
+    if (picker) open_picker_source_items(a, picker, src, max_items);
+}
+
+/* Same as open_picker_source(), but seeds the query first (Space s w). */
+static void open_picker_query(App* a, PickerSource src, const char* query)
+{
+    Picker* picker = ensure_picker(a);
+    if (!picker) return;
+    picker_open_query(picker, src, query);
+    a->redraw = true;
+}
+
+static void open_picker_source_items(App* a, Picker* picker, PickerSource src, uint32_t max_items)
+{
     if (src == PSRC_BUFFERS)
     {
         PickerItem items[QUILL_MAX_BUFFERS];
@@ -377,7 +471,7 @@ static void open_picker_source(App* a, PickerSource src, uint32_t max_items)
             snprintf(items[i].path, sizeof items[i].path, "%s", a->bm.docs[i]->path);
             items[i].offset = i;
         }
-        picker_open_items(a->picker, src, items, a->bm.count);
+        picker_open_items(picker, src, items, a->bm.count);
     }
     else if (src == PSRC_RECENT)
     {
@@ -390,11 +484,26 @@ static void open_picker_source(App* a, PickerSource src, uint32_t max_items)
             snprintf(items[i].label, sizeof items[i].label, "%.250s", a->bm.recent[i]);
             snprintf(items[i].path, sizeof items[i].path, "%s", a->bm.recent[i]);
         }
-        picker_open_items(a->picker, src, items, n);
+        picker_open_items(picker, src, items, n);
     }
     else
-        picker_open(a->picker, src);
+        picker_open(picker, src);
     a->redraw = true;
+}
+
+/* Space s w: live grep seeded with the word under the cursor. With nothing to
+ * search for (empty buffer, cursor in blank space) it degrades to the plain
+ * grep prompt rather than doing nothing. */
+static void open_picker_grep_word(App* a)
+{
+    char word[128];
+    if (!ensure_picker(a)) return;
+    if (!word_under_cursor(a, word, sizeof word))
+    {
+        open_picker_source(a, PSRC_GREP, 0u);
+        return;
+    }
+    open_picker_query(a, PSRC_GREP, word);
 }
 
 static void execute_command(App* a, const char* cmd)
@@ -419,6 +528,7 @@ static void execute_command(App* a, const char* cmd)
     else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES, 0u);
     else if (strcmp(cmd, "Buffers") == 0) open_picker_source(a, PSRC_BUFFERS, 0u);
     else if (strcmp(cmd, "Live Grep") == 0) open_picker_source(a, PSRC_GREP, 0u);
+    else if (strcmp(cmd, "Live Grep Word Under Cursor") == 0) open_picker_grep_word(a);
     else if (strcmp(cmd, "Document Symbols") == 0) open_picker_source(a, PSRC_SYMBOLS, 0u);
     else if (strcmp(cmd, "Project Symbols") == 0) open_picker_source(a, PSRC_PROJECT_SYMBOLS, 0u);
     else if (strcmp(cmd, "Recent Files") == 0) open_picker_source(a, PSRC_RECENT, 0u);
@@ -511,6 +621,7 @@ static void handle_request(App* a)
     case QREQ_PICKER_FILES: open_picker_source(a, PSRC_FILES, 0u); break;
     case QREQ_PICKER_BUFFERS: open_picker_source(a, PSRC_BUFFERS, 0u); break;
     case QREQ_PICKER_GREP: open_picker_source(a, PSRC_GREP, 0u); break;
+    case QREQ_PICKER_GREP_WORD: open_picker_grep_word(a); break;
     case QREQ_PICKER_SYMBOLS: open_picker_source(a, PSRC_SYMBOLS, 0u); break;
     case QREQ_PICKER_PROJECT_SYMBOLS: open_picker_source(a, PSRC_PROJECT_SYMBOLS, 0u); break;
     case QREQ_PICKER_RECENT: open_picker_source(a, PSRC_RECENT, 5u); break; /* top five recents */

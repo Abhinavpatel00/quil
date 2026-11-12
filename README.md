@@ -17,8 +17,9 @@ A high-performance Vulkan code/text editor backed by **`mu_quill`**, with
 - Modal editing (Normal/Insert/Visual char/line/block), counts, operators,
   text objects, registers, dot repeat, and search.
 - Hybrid multicursor selection set with grouped undo (`Ctrl-n`, `Alt-click`).
-- Telescope-like picker: files, buffers, live grep, symbols, recent, commands,
-  keymaps, help; fuzzy matching, preview, async cancellable jobs.
+- Telescope-like picker: files, buffers, live grep (also seeded with the word
+  under the cursor via `Space s w`), symbols, recent, commands, keymaps, help;
+  fuzzy matching, preview, async cancellable jobs.
 - Neovide-style spring scroll/cursor motion, cursor trail, smooth blink, and
   reduced-motion fallback.
 - Optional dramatic camera (`dramatic = true`): parks the cursor at a lead point

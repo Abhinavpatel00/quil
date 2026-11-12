@@ -1373,6 +1373,7 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
         m->pending = 0;
         if (ch == ' ') { m->request = QREQ_PICKER_RECENT; return true; } /* leader space -> recent (top five) */
         if (ch == 'f') { m->request = QREQ_PICKER_FILES; return true; }  /* leader f -> file picker */
+        if (ch == 's') { m->pending = 's'; return true; }               /* leader s -> search submenu */
         if (ch == 'm') { m->pending = 3; return true; }
         if (ch == 'c') { m->request = QREQ_PICKER_COMMANDS; return true; }
         if (ch == 'k') { m->request = QREQ_PICKER_KEYMAPS; return true; }
@@ -1380,6 +1381,14 @@ static bool modal_key_ch(ModalState* m, Document* d, SelectionSet* ss,
         if (ch == 't') { m->request = QREQ_TERMINAL; return true; }
         if (ch == 'w') { m->request = QREQ_SAVE; return true; }
         if (ch == 'q') { m->request = QREQ_QUIT; return true; }
+        return true;
+    }
+    if (m->pending == 's')
+    {
+        /* Leader s: workspace search. s w greps the word (or the visual
+         * selection) under the cursor instead of opening an empty prompt. */
+        m->pending = 0;
+        if (ch == 'w') m->request = QREQ_PICKER_GREP_WORD;
         return true;
     }
     if (m->pending == 3)

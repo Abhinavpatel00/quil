@@ -387,7 +387,8 @@ void picker_open(Picker* p, PickerSource src)
     {
         static const char* cmds[] = {
             "Save", "Quit", "Toggle Line Numbers", "Dramatic Mode", "Zoom In", "Zoom Out",
-            "Find Files", "Buffers", "Live Grep", "Document Symbols",
+            "Find Files", "Buffers", "Live Grep", "Live Grep Word Under Cursor",
+            "Document Symbols",
             "Project Symbols", "Recent Files", "Keymaps", "Help",
             "Cursor VFX: none", "Cursor VFX: railgun", "Cursor VFX: torpedo",
             "Cursor VFX: pixiedust", "Cursor VFX: sonicboom", "Cursor VFX: ripple",
@@ -409,7 +410,8 @@ void picker_open(Picker* p, PickerSource src)
     {
         static const char* keys[] = {
             "Space leader", "Space <Space>  recent (top 5)", "Space f  files",
-            "Space c  commands", "Space k  keymaps", "Space h  help",
+            "Space s w  grep word under cursor", "Space c  commands",
+            "Space k  keymaps", "Space h  help",
             "Space t  terminal", "Space w  save", "Space q  quit",
             "Ctrl-n  add next cursor", "Ctrl-Alt-p  remove cursor", "Alt-click  add cursor",
             "i a o I A O  insert", "v V Ctrl-v  visual", "d c y  operators",
@@ -427,7 +429,8 @@ void picker_open(Picker* p, PickerSource src)
             "Quill modal editor", "Normal mode is the default.", "Press i to insert, Esc to return.",
             "Operators combine with motions: dw, d$, dd, yw, yy.", "Text objects: iw, aw, i\", a(, ip.",
             "Registers: \"ayy yanks into a, \"ap puts.", "Multicursor: Ctrl-n adds next occurrence.",
-            "Picker: Space f f files, Space f g grep.", "Motion is configurable in quill.conf."
+            "Picker: Space f files, Space s w grep word under cursor.",
+            "Motion is configurable in quill.conf."
         };
         uint32_t i;
         for (i = 0u; i < sizeof help / sizeof help[0]; ++i)
@@ -435,6 +438,32 @@ void picker_open(Picker* p, PickerSource src)
     }
     filter_static(p);
     build_preview(p);
+}
+
+/* Opens a query-driven source with the prompt already filled in. Used by
+ * Space s w to grep the word under the cursor: the picker comes up on real
+ * hits instead of an empty prompt, and editing the query narrows it further
+ * through the usual query_changed() path. */
+void picker_open_query(Picker* p, PickerSource src, const char* query)
+{
+    size_t len;
+    picker_open(p, src);
+    if (!query || !query[0]) return;
+    len = strlen(query);
+    if (len >= sizeof p->query) len = sizeof p->query - 1u;
+    memcpy(p->query, query, len);
+    p->query[len] = 0;
+    p->query_len = (uint32_t)len;
+    /* picker_open() already launched a job for the empty query. Bumping the
+     * generation through start_job() cancels that one and re-walks with the
+     * seed, so no stale "match everything" result can land later. */
+    if (src == PSRC_FILES || src == PSRC_GREP || src == PSRC_PROJECT_SYMBOLS)
+        start_job(p, src);
+    else
+    {
+        filter_static(p);
+        build_preview(p);
+    }
 }
 
 void picker_close(Picker* p)

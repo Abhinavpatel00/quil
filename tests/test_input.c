@@ -228,6 +228,109 @@ int main(void)
     assert(A.picker->count == 1u);
     assert(strcmp(A.picker->items[0].path, "only.c") == 0);
 
+    /* 11. Space s w greps the word under the cursor across the workspace:
+     *     the picker opens on a real hit with the query already filled in. */
+    if (A.picker) { picker_destroy(A.picker); MU_FREE(A.picker); A.picker = NULL; }
+    bm_destroy(&A.bm);
+    (void)mkdir("build/test_grep_word_dir", 0755);
+    {
+        FILE* f = fopen("build/test_grep_word_dir/a.c", "w");
+        assert(f);
+        fputs("int needle_word = 1;\n", f);
+        fclose(f);
+        f = fopen("build/test_grep_word_dir/b.c", "w");
+        assert(f);
+        fputs("unrelated\n", f);
+        fclose(f);
+    }
+    assert(app_init_doc(&A, "build/test_grep_word_dir"));
+    reset(); /* drops the startup files picker */
+    doc_set_text(A.doc, "int needle_word = 1;\n", 21u);
+    ss_single(&A.ss, 8u); /* inside "needle_word" */
+    ss_sync_doc(&A.ss, A.doc);
+    app_on_char(&A, ' ');
+    assert(A.modal.pending == 1);
+    app_on_char(&A, 's');
+    assert(A.modal.pending == 's');
+    app_on_char(&A, 'w');
+    assert(A.modal.pending == 0);
+    assert(A.picker && A.picker->open && A.picker->source == PSRC_GREP);
+    assert(strcmp(A.picker->query, "needle_word") == 0);
+    {
+        uint32_t i;
+        for (i = 0u; i < 200u && A.picker->count == 0u; ++i)
+        {
+            picker_poll(A.picker);
+            usleep(10000);
+        }
+    }
+    picker_poll(A.picker);
+    assert(A.picker->count == 1u);
+    assert(strcmp(A.picker->items[0].path, "a.c") == 0);
+    assert(A.picker->items[0].line == 0u);
+    assert(strstr(A.picker->items[0].label, "needle_word") != NULL);
+
+    /* 11b. A visual selection wins over the single word, so a selected phrase
+     *      is grepped as-is. */
+    picker_close(A.picker);
+    ss_single(&A.ss, 15u);
+    A.ss.c[0].anchor = 0u; /* visual selection: "int needle_word" */
+    A.ss.c[0].head = 15u;
+    ss_sync_doc(&A.ss, A.doc);
+    A.modal.mode = QMODE_VISUAL;
+    app_on_char(&A, ' ');
+    app_on_char(&A, 's');
+    app_on_char(&A, 'w');
+    assert(A.picker && A.picker->open && A.picker->source == PSRC_GREP);
+    assert(strcmp(A.picker->query, "int needle_word") == 0);
+    {
+        uint32_t i;
+        for (i = 0u; i < 200u && A.picker->count == 0u; ++i)
+        {
+            picker_poll(A.picker);
+            usleep(10000);
+        }
+    }
+    picker_poll(A.picker);
+    assert(A.picker->count == 1u);
+    A.modal.mode = QMODE_NORMAL;
+
+    /* 11c. On whitespace there is no word: fall back to the empty grep prompt
+     *      instead of searching for a single stray character. */
+    picker_close(A.picker);
+    reset();
+    doc_set_text(A.doc, "    x\n", 6u);
+    ss_single(&A.ss, 2u);
+    ss_sync_doc(&A.ss, A.doc);
+    app_on_char(&A, ' ');
+    app_on_char(&A, 's');
+    app_on_char(&A, 'w');
+    assert(A.picker && A.picker->open && A.picker->source == PSRC_GREP);
+    assert(A.picker->query[0] == 0);
+
+    /* 11d. A cursor sitting just past the word (on the newline) still greps
+     *      that word rather than falling back to an empty prompt. */
+    picker_close(A.picker);
+    reset();
+    doc_set_text(A.doc, "int needle_word\n", 16u);
+    ss_single(&A.ss, 15u); /* on the newline, right after the word */
+    ss_sync_doc(&A.ss, A.doc);
+    app_on_char(&A, ' ');
+    app_on_char(&A, 's');
+    app_on_char(&A, 'w');
+    assert(A.picker && A.picker->open && A.picker->source == PSRC_GREP);
+    assert(strcmp(A.picker->query, "needle_word") == 0);
+
+    /* 11e. An unknown leader sub-key is swallowed and opens nothing. */
+    picker_close(A.picker);
+    reset();
+    app_on_char(&A, ' ');
+    app_on_char(&A, 's');
+    assert(A.modal.pending == 's');
+    app_on_char(&A, 'x');
+    assert(A.modal.pending == 0);
+    assert(A.picker == NULL || !A.picker->open);
+
     if (A.picker) { picker_destroy(A.picker); MU_FREE(A.picker); A.picker = NULL; }
     bm_destroy(&A.bm);
     font_destroy(A.fs);

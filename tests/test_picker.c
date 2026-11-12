@@ -48,6 +48,19 @@ int main(void)
     }
     assert(panel_opaque);
 
+    /* A seeded query opens the picker with the prompt already filled and the
+     * static list filtered, which is what Space s w relies on. */
+    picker_open_query(&p, PSRC_COMMANDS, "Zoom");
+    assert(p.open && p.source == PSRC_COMMANDS);
+    assert(strcmp(p.query, "Zoom") == 0 && p.query_len == 4u);
+    assert(p.count >= 2u && p.count < 8u);
+    for (i = 0u; i < p.count; ++i)
+        assert(picker_fuzzy_score(p.query, p.items[i].label) >= 0);
+    /* An empty seed behaves exactly like picker_open(): the whole list. */
+    picker_open_query(&p, PSRC_COMMANDS, "");
+    assert(strcmp(p.query, "") == 0 && p.query_len == 0u);
+    assert(p.count == p.base_count);
+
     /* Closing must clear the overlay layer. render_app() only calls
      * frame_overlay_begin() while something is open, so the overlay counters
      * have to be reset by frame_build(); otherwise the renderer keeps drawing

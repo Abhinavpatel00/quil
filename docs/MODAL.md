@@ -92,6 +92,7 @@ Leader is `Space`.
 ```
 <Space><Space>   recent (top five)
 <Space>f         file picker
+<Space>s w       grep the word under the cursor across the workspace
 Ctrl-p           files
 Space c          commands
 Space k          keymaps
@@ -101,6 +102,11 @@ Space w          save
 Space q          quit
 :                command palette
 ```
+
+`<Space>s w` seeds the live grep with the word under the cursor, so the picker
+opens on real hits; a visual selection is used instead of the single word when
+one is active. With the cursor on whitespace (or an empty buffer) it falls back
+to the plain grep prompt. Editing the query narrows the results as usual.
 
 Picker features:
 
