@@ -503,15 +503,36 @@ static void reg_set(ModalState* m, int reg, const char* text, uint32_t len, bool
 static uint32_t reg_get(ModalState* m, int reg, char* out, uint32_t cap, bool* linewise)
 {
     uint32_t idx = (uint32_t)reg, len;
-    if (reg == '+' || reg == '*')
+    /* The unnamed register mirrors the system clipboard on yank/delete, so a
+     * bare p/P must read the clipboard too. Otherwise text copied in another
+     * application stays invisible to p until quill itself yanks something. */
+    if (reg == '+' || reg == '*' || reg == '"')
     {
         const char* s = m->window ? glfwGetClipboardString(m->window) : NULL;
-        if (!s) s = "";
-        len = (uint32_t)strlen(s);
-        if (len > cap) len = cap;
-        memcpy(out, s, len);
-        if (linewise) *linewise = false;
-        return len;
+        if (s && s[0])
+        {
+            uint32_t unnamed = (uint32_t)'"';
+            len = (uint32_t)strlen(s);
+            if (len > cap) len = cap;
+            memcpy(out, s, len);
+            if (linewise)
+            {
+                /* Keep a linewise paste when the clipboard still holds exactly
+                 * what quill yanked/deleted (the unnamed register mirrors it).
+                 * Text put there by another application is pasted charwise. */
+                *linewise = reg == '"' && m->reg_linewise[unnamed] &&
+                            m->reg_len[unnamed] == len &&
+                            memcmp(m->reg_data[unnamed], out, len) == 0;
+            }
+            return len;
+        }
+        if (reg == '+' || reg == '*')
+        {
+            if (linewise) *linewise = false;
+            return 0u;
+        }
+        /* Clipboard empty/unavailable (e.g. headless tests): fall through to
+         * the local unnamed register so p still works. */
     }
     if (idx >= QUILL_MAX_REGISTERS) return 0u;
     len = m->reg_len[idx];

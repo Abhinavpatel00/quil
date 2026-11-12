@@ -67,7 +67,11 @@ Implemented register file:
 `+` and `*` use the GLFW clipboard when a window exists. The unnamed register
 `"` is synced to the same clipboard on yank/delete, so `yy` / `y` in Visual
 mode puts text into the system clipboard -- including on Wayland -- where it
-can be pasted into other applications. The black-hole register `_` discards
+can be pasted into other applications. Conversely, `p` / `P` read the system
+clipboard, so text copied from another application pastes directly; when the
+clipboard is empty or unavailable they fall back to the local unnamed
+register. A linewise yank/delete stays linewise on paste as long as the
+clipboard still holds that same text. The black-hole register `_` discards
 yanks/deletes without touching the clipboard. Registers are fixed-capacity
 (`QUILL_REG_CAP = 4096`) and stored in `ModalState`.
 

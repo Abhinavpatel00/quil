@@ -34,9 +34,11 @@ counts and lazy line-start arrays. Round 10 added three reusable APIs to
   line text buffer, and status string. It is allocated once and reused.
 - `LineLayout[]` caches shaped glyphs for visible lines so mouse hit-testing
   does not reshape on every event.
-- Shaping cache: hash of line bytes + size + tab width -> arena offset/count.
-  Atlas cache: face|glyph|size|phase -> shelf rectangle. Both reset by
-  generation when full or on zoom.
+- Shaping cache: hash of line bytes + length + size + tab width -> arena
+  offset/count. Length and tab width are verified on lookup, so the same text
+  shaped for a different context (a terminal cell vs. an editor line) never
+  reuses the wrong glyphs. Atlas cache: face|glyph|size|phase -> shelf
+  rectangle. Both reset by generation when full or on zoom.
 - Undo: `mu_small_vec` stacks of `UndoOp` + append-only `mu_vm_arena` payload.
   Adjacent short inserts coalesce within 800 ms. No malloc in the edit path.
 

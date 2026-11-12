@@ -37,6 +37,8 @@ typedef struct ShapeEntry
     uint64_t key;
     uint32_t offset;
     uint32_t count;
+    uint32_t len;        /* source bytes; validated on lookup */
+    uint32_t tab_width;  /* tab expansion used for this shape */
 } ShapeEntry;
 
 struct FontSystem
@@ -726,9 +728,12 @@ uint32_t font_shape_line(FontSystem* fs, const uint8_t* text, uint32_t len,
     if (len > QUILL_MAX_LINE) len = QUILL_MAX_LINE;
     if (tab_width == 0u) tab_width = QUILL_TAB_WIDTH;
 
-    key = hash_bytes(text, len, ((uint64_t)font_size(fs) << 32) | tab_width);
+    key = hash_bytes(text, len, ((uint64_t)font_size(fs) << 32) |
+                                 ((uint64_t)len << 16) | (uint64_t)tab_width);
     if (mu_hash32_get(&fs->shape_map, key, &idx) && idx != 0u &&
-        idx <= fs->nshapes && fs->shapes[idx - 1u].key == key)
+        idx <= fs->nshapes && fs->shapes[idx - 1u].key == key &&
+        fs->shapes[idx - 1u].len == len &&
+        fs->shapes[idx - 1u].tab_width == tab_width)
     {
         se = &fs->shapes[idx - 1u];
         *out = (const ShapedGlyph*)((const uint8_t*)mu_vm_arena_base(&fs->shape_arena) + se->offset);
@@ -833,6 +838,8 @@ uint32_t font_shape_line(FontSystem* fs, const uint8_t* text, uint32_t len,
     se->key = key;
     se->offset = (uint32_t)((uint8_t*)glyphs - (uint8_t*)mu_vm_arena_base(&fs->shape_arena));
     se->count = count;
+    se->len = len;
+    se->tab_width = tab_width;
     mu_hash32_set(&fs->shape_map, key, fs->nshapes);
     *out = glyphs;
     return count;

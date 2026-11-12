@@ -36,6 +36,35 @@ int main(void)
     n2 = font_shape_line(fs, (const uint8_t*)"int main", 8u, 4u, &g2);
     assert(n2 == n && g == g2); /* cache hit */
 
+    /* The cache key must distinguish tab width and text length. Terminal
+     * cells are shaped one at a time with tab width 1, while editor text is
+     * shaped with tab width 4. Hashing only the bytes made collisions
+     * systematic: hash("x", tab 1) == hash("{", tab 2) == hash("}", tab 4).
+     * So once a lone brace was cached, a terminal 'x' was drawn as that
+     * brace -- exactly the "x looks like {" report. */
+    {
+        uint32_t x_glyph, lbrace_glyph, rbrace_glyph;
+        n = font_shape_line(fs, (const uint8_t*)"x", 1u, 3u, &g);
+        assert(n == 1u);
+        x_glyph = g[0].glyph;
+        n = font_shape_line(fs, (const uint8_t*)"{", 1u, 1u, &g);
+        assert(n == 1u);
+        lbrace_glyph = g[0].glyph;
+        n = font_shape_line(fs, (const uint8_t*)"}", 1u, 4u, &g);
+        assert(n == 1u);
+        rbrace_glyph = g[0].glyph;
+        assert(lbrace_glyph != x_glyph && rbrace_glyph != x_glyph);
+        assert(lbrace_glyph != rbrace_glyph);
+        /* A terminal cell must keep its own glyph... */
+        n = font_shape_line(fs, (const uint8_t*)"x", 1u, 1u, &g);
+        assert(n == 1u);
+        assert(g[0].glyph == x_glyph);
+        /* ...and a '{' must never inherit the cached '}' shape. */
+        n = font_shape_line(fs, (const uint8_t*)"{", 1u, 2u, &g);
+        assert(n == 1u);
+        assert(g[0].glyph == lbrace_glyph);
+    }
+
     n = font_shape_line(fs, (const uint8_t*)"a\tb", 3u, 4u, &g);
     assert(n >= 3u);
     assert(g[0].cluster == 0u);
