@@ -493,12 +493,19 @@ void terminal_send_key(Terminal* t, int glfw_key, int glfw_mods)
         vterm_keyboard_key(t->vt, key, mod);
         return;
     }
-    /* Ctrl/Alt + a printable position: encode the base character. Letters go
-     * lowercase so Ctrl chords map to the right control codes on any layout. */
+    /* Ctrl/Alt + a printable position: encode the base character. GLFW key
+     * codes for letters coincide with ASCII capitals, so fold case according
+     * to Shift; Ctrl chords still map to the right control codes because
+     * libvterm treats control letters case-insensitively. Symbols are emitted
+     * as-is here -- shifted symbols are resolved by the layout-aware char
+     * callback and never reach this branch for plain printable input. */
     {
         uint32_t c = 0u;
-        if (glfw_key >= GLFW_KEY_A && glfw_key <= GLFW_KEY_Z) c = (uint32_t)(glfw_key + 32);
-        else if (glfw_key >= GLFW_KEY_SPACE && glfw_key <= GLFW_KEY_GRAVE_ACCENT) c = (uint32_t)glfw_key;
+        bool upper = (mod & VTERM_MOD_SHIFT) != 0u;
+        if (glfw_key >= GLFW_KEY_A && glfw_key <= GLFW_KEY_Z)
+            c = (uint32_t)(upper ? glfw_key : glfw_key + 32u);
+        else if (glfw_key >= GLFW_KEY_SPACE && glfw_key <= GLFW_KEY_GRAVE_ACCENT)
+            c = (uint32_t)glfw_key;
         if (c) vterm_keyboard_unichar(t->vt, c, mod);
     }
 }
