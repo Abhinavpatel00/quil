@@ -3,3 +3,6 @@
 	url = https://github.com/glfw/glfw.git
 	shallow = true
 	branch = 3.4
+[submodule "third_party/mu_lib"]
+	path = third_party/mu_lib
+	url = https://github.com/Abhinavpatel00/mu_lib-

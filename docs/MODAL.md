@@ -90,17 +90,16 @@ multi-range replacements in descending offset order inside one undo group.
 Leader is `Space`.
 
 ```
-<Space>ff   files
-<Space>fb   buffers
-<Space>fg   live grep
-<Space>fs   document symbols
-<Space>fS   project symbols
-<Space>fr   recent files
-<Space>fc   commands
-<Space>fk   keymaps
-<Space>fh   help
-Ctrl-p      files
-:           command palette
+<Space><Space>   recent (top five)
+<Space>f         file picker
+Ctrl-p           files
+Space c          commands
+Space k          keymaps
+Space h          help
+Space t          terminal
+Space w          save
+Space q          quit
+:                command palette
 ```
 
 Picker features:

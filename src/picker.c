@@ -408,8 +408,9 @@ void picker_open(Picker* p, PickerSource src)
     else if (src == PSRC_KEYMAPS)
     {
         static const char* keys[] = {
-            "Space leader", "Space f f  files", "Space f b  buffers", "Space f g  grep",
-            "Space f s  symbols", "Space f S  project symbols", "Space f r  recent",
+            "Space leader", "Space <Space>  recent (top 5)", "Space f  files",
+            "Space c  commands", "Space k  keymaps", "Space h  help",
+            "Space t  terminal", "Space w  save", "Space q  quit",
             "Ctrl-n  add next cursor", "Ctrl-Alt-p  remove cursor", "Alt-click  add cursor",
             "i a o I A O  insert", "v V Ctrl-v  visual", "d c y  operators",
             "p P  put", "u Ctrl-r  undo/redo", ".  repeat", "/ ? n N  search",

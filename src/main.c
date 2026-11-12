@@ -14,6 +14,7 @@
 #include "terminal.h"
 
 #include <GLFW/glfw3.h>
+#include "platform.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -31,6 +32,7 @@ typedef struct App
     uint32_t      nlayouts;
     FrameParams   params;
     GLFWwindow*   window;
+    Platform      platform; /* mu_input + GLFW backend (adopts `window`) */
     SelectionSet  ss;
     ModalState    modal;
     Picker*       picker;
@@ -65,6 +67,9 @@ typedef struct App
     bool          term_skip_char;    /* key callback handled/suppressed this char */
     char          root[1024];        /* picker root (folder given on the CLI) */
     bool          open_files_on_start; /* root was a directory: show the picker */
+    /* Reusable clipboard buffer: copy/paste stage through here instead of
+     * malloc/free on every operation. */
+    char          clipboard_buf[QUILL_CLIPBOARD_CAP];
 } App;
 
 static const char SAMPLE_C[] =
@@ -353,7 +358,7 @@ static void render_term_status(App* a)
     (void)accent;
 }
 
-static void open_picker_source(App* a, PickerSource src)
+static void open_picker_source(App* a, PickerSource src, uint32_t max_items)
 {
     if (!a->picker)
     {
@@ -377,14 +382,15 @@ static void open_picker_source(App* a, PickerSource src)
     else if (src == PSRC_RECENT)
     {
         PickerItem items[QUILL_MAX_BUFFERS];
-        uint32_t i;
-        for (i = 0u; i < a->bm.nrecent; ++i)
+        uint32_t i, n = a->bm.nrecent;
+        if (max_items != 0u && n > max_items) n = max_items;
+        for (i = 0u; i < n; ++i)
         {
             memset(&items[i], 0, sizeof items[i]);
             snprintf(items[i].label, sizeof items[i].label, "%.250s", a->bm.recent[i]);
             snprintf(items[i].path, sizeof items[i].path, "%s", a->bm.recent[i]);
         }
-        picker_open_items(a->picker, src, items, a->bm.nrecent);
+        picker_open_items(a->picker, src, items, n);
     }
     else
         picker_open(a->picker, src);
@@ -410,8 +416,8 @@ static void execute_command(App* a, const char* cmd)
     }
     else if (strcmp(cmd, "Zoom In") == 0) { if (a->size_px < 64u) { a->size_px += 2u; font_set_size(a->fs, a->size_px, a->scale); } }
     else if (strcmp(cmd, "Zoom Out") == 0) { if (a->size_px > 8u) { a->size_px -= 2u; font_set_size(a->fs, a->size_px, a->scale); } }
-    else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES);
-    else if (strcmp(cmd, "Buffers") == 0) open_picker_source(a, PSRC_BUFFERS);
+    else if (strcmp(cmd, "Find Files") == 0) open_picker_source(a, PSRC_FILES, 0u);
+    else if (strcmp(cmd, "Buffers") == 0) open_picker_source(a, PSRC_BUFFERS, 0u);
     else if (strcmp(cmd, "Live Grep") == 0) open_picker_source(a, PSRC_GREP);
     else if (strcmp(cmd, "Document Symbols") == 0) open_picker_source(a, PSRC_SYMBOLS);
     else if (strcmp(cmd, "Project Symbols") == 0) open_picker_source(a, PSRC_PROJECT_SYMBOLS);
@@ -502,15 +508,15 @@ static void handle_request(App* a)
     a->modal.request = QREQ_NONE;
     switch (r)
     {
-    case QREQ_PICKER_FILES: open_picker_source(a, PSRC_FILES); break;
-    case QREQ_PICKER_BUFFERS: open_picker_source(a, PSRC_BUFFERS); break;
-    case QREQ_PICKER_GREP: open_picker_source(a, PSRC_GREP); break;
-    case QREQ_PICKER_SYMBOLS: open_picker_source(a, PSRC_SYMBOLS); break;
-    case QREQ_PICKER_PROJECT_SYMBOLS: open_picker_source(a, PSRC_PROJECT_SYMBOLS); break;
-    case QREQ_PICKER_RECENT: open_picker_source(a, PSRC_RECENT); break;
-    case QREQ_PICKER_COMMANDS: open_picker_source(a, PSRC_COMMANDS); break;
-    case QREQ_PICKER_KEYMAPS: open_picker_source(a, PSRC_KEYMAPS); break;
-    case QREQ_PICKER_HELP: open_picker_source(a, PSRC_HELP); break;
+    case QREQ_PICKER_FILES: open_picker_source(a, PSRC_FILES, 0u); break;
+    case QREQ_PICKER_BUFFERS: open_picker_source(a, PSRC_BUFFERS, 0u); break;
+    case QREQ_PICKER_GREP: open_picker_source(a, PSRC_GREP, 0u); break;
+    case QREQ_PICKER_SYMBOLS: open_picker_source(a, PSRC_SYMBOLS, 0u); break;
+    case QREQ_PICKER_PROJECT_SYMBOLS: open_picker_source(a, PSRC_PROJECT_SYMBOLS, 0u); break;
+    case QREQ_PICKER_RECENT: open_picker_source(a, PSRC_RECENT, 5u); break; /* top five recents */
+    case QREQ_PICKER_COMMANDS: open_picker_source(a, PSRC_COMMANDS, 0u); break;
+    case QREQ_PICKER_KEYMAPS: open_picker_source(a, PSRC_KEYMAPS, 0u); break;
+    case QREQ_PICKER_HELP: open_picker_source(a, PSRC_HELP, 0u); break;
     case QREQ_SEARCH_FWD:
     case QREQ_SEARCH_REV:
         a->search_open = true;
@@ -624,12 +630,57 @@ static void set_ranges_for_clipboard(App* a, const uint32_t* starts, const uint3
     ss_normalize(&a->ss);
 }
 
+/* ---- clipboard ---------------------------------------------------------- */
+
+/* Copy `len` bytes of `src` (NUL-terminated) into the reusable clipboard
+ * buffer, discarding whatever was there before. No malloc is involved.
+ * Returns a NUL-terminated pointer into a->clipboard_buf, or NULL if `src`
+ * is NULL. The buffer is reused on every call, so the previous content is
+ * simply overwritten -- no allocator latency on copy or paste.
+ *
+ * `glfwSetClipboardString` copies the string internally (on Wayland it keeps
+ * a local mirror via wl_data_source), so the staged buffer only needs to be
+ * valid during this call. */
+static const char* clipboard_stage(App* a, const char* src, uint32_t len)
+{
+    if (!src) return NULL;
+    if (len >= QUILL_CLIPBOARD_CAP) len = QUILL_CLIPBOARD_CAP - 1u;
+    memcpy(a->clipboard_buf, src, len);
+    a->clipboard_buf[len] = '\0';
+    return a->clipboard_buf;
+}
+
+/* Set the system clipboard from a NUL-terminated string. Guarded so we never
+ * call GLFW with a NULL window or a NULL string. On Wayland this goes through
+ * wl_data_device_set_selection, which requires a valid event serial; all
+ * call sites are inside key/button callbacks so a serial is current. */
+static bool clipboard_set(GLFWwindow* w, const char* text)
+{
+    if (!w || !text) return false;
+    glfwSetClipboardString(w, text);
+    return true;
+}
+
+/* Copy the system clipboard contents into the reusable buffer (no malloc).
+ * Returns byte length, or -1 if unavailable/empty. Copies immediately to
+ * avoid a use-after-free: glfwGetClipboardString() points at GLFW-internal
+ * storage that is freed on the next clipboard-set call. */
+static int clipboard_get(App* a, GLFWwindow* w)
+{
+    const char* s;
+    uint32_t len;
+    if (!w) return -1;
+    s = glfwGetClipboardString(w);
+    if (!s) return -1;
+    len = (uint32_t)strlen(s);
+    if (len == 0u) return -1;
+    return (int)(clipboard_stage(a, s, len) ? len : -1);
+}
+
 static bool copy_selection_to_clipboard(App* a, bool cut)
 {
     uint32_t starts[QUILL_MAX_CURSORS], ends[QUILL_MAX_CURSORS];
-    uint32_t total = 0u, i;
-    char* data;
-    uint32_t at = 0u;
+    uint32_t total = 0u, i, at = 0u;
 
     if (!a->window) return false;
     if (a->ss.count == 0u) return false;
@@ -651,18 +702,36 @@ static bool copy_selection_to_clipboard(App* a, bool cut)
         total += ends[i] - starts[i];
     }
 
-    data = (char*)MU_MALLOC((size_t)total + 1u);
-    if (!data) return false;
-    for (i = 0u; i < a->ss.count; ++i)
+    if (total < QUILL_CLIPBOARD_CAP)
     {
-        uint32_t len = ends[i] - starts[i];
-        if (i > 0u) data[at++] = '\n';
-        mu_quill_text(&a->doc->q, starts[i], len, data + at);
-        at += len;
+        /* Fast path: stage into the reusable buffer, no heap at all. */
+        for (i = 0u; i < a->ss.count; ++i)
+        {
+            uint32_t len = ends[i] - starts[i];
+            if (i > 0u) a->clipboard_buf[at++] = '\n';
+            mu_quill_text(&a->doc->q, starts[i], len, a->clipboard_buf + at);
+            at += len;
+        }
+        a->clipboard_buf[at] = '\0';
+        clipboard_set(a->window, a->clipboard_buf);
     }
-    data[at] = 0;
-    glfwSetClipboardString(a->window, data);
-    MU_FREE(data);
+    else
+    {
+        /* Rare path: a single copy larger than the reusable buffer.
+         * Allocate once instead of silently truncating. */
+        char* data = (char*)MU_MALLOC((size_t)total + 1u);
+        if (!data) return false;
+        for (i = 0u; i < a->ss.count; ++i)
+        {
+            uint32_t len = ends[i] - starts[i];
+            if (i > 0u) data[at++] = '\n';
+            mu_quill_text(&a->doc->q, starts[i], len, data + at);
+            at += len;
+        }
+        data[at] = '\0';
+        clipboard_set(a->window, data);
+        MU_FREE(data);
+    }
     if (cut)
     {
         set_ranges_for_clipboard(a, starts, ends);
@@ -675,14 +744,11 @@ static bool copy_selection_to_clipboard(App* a, bool cut)
 
 static bool paste_clipboard(App* a)
 {
-    const char* s;
-    uint32_t len;
+    int len;
     if (!a->window) return false;
-    s = glfwGetClipboardString(a->window);
-    if (!s) return false;
-    len = (uint32_t)strlen(s);
-    if (len == 0u) return false;
-    if (!ss_replace_all(&a->ss, a->doc, s, len, app_now_ms()))
+    len = clipboard_get(a, a->window);
+    if (len < 0) return false;
+    if (!ss_replace_all(&a->ss, a->doc, a->clipboard_buf, (uint32_t)len, app_now_ms()))
         return false;
     sync_after_edit(a);
     a->redraw = true;
@@ -695,7 +761,7 @@ static bool term_copy_clipboard(App* a)
     if (!a->window || !a->term) return false;
     text = terminal_selection_text(a->term);
     if (!text) return false;
-    glfwSetClipboardString(a->window, text);
+    clipboard_set(a->window, clipboard_stage(a, text, (uint32_t)strlen(text)));
     MU_FREE(text);
     a->redraw = true;
     return true;
@@ -703,11 +769,11 @@ static bool term_copy_clipboard(App* a)
 
 static bool term_paste_clipboard(App* a)
 {
-    const char* text;
+    int len;
     if (!a->window || !a->term) return false;
-    text = glfwGetClipboardString(a->window);
-    if (!text || !text[0]) return false;
-    terminal_paste(a->term, text, strlen(text));
+    len = clipboard_get(a, a->window);
+    if (len < 0) return false;
+    terminal_paste(a->term, a->clipboard_buf, (size_t)len);
     a->redraw = true;
     return true;
 }
@@ -803,7 +869,7 @@ static void app_on_key(App* a, int key, int scancode, int action, int mods)
         case GLFW_KEY_X: copy_selection_to_clipboard(a, true); return;
         case GLFW_KEY_V: paste_clipboard(a); return;
         case GLFW_KEY_S: doc_save_file(a->doc, NULL); a->redraw = true; return;
-        case GLFW_KEY_P: open_picker_source(a, PSRC_FILES); return;
+        case GLFW_KEY_P: open_picker_source(a, PSRC_FILES, 0u); return;
         case GLFW_KEY_D: { int n = (int)(visible_rows(a) / 2u); modal_scroll(&a->modal, a->doc, &a->ss, n, visible_rows(a)); set_target_top(a, a->target_top + (float)n); a->redraw = true; return; }
         case GLFW_KEY_U: { int n = (int)(visible_rows(a) / 2u); modal_scroll(&a->modal, a->doc, &a->ss, -n, visible_rows(a)); set_target_top(a, a->target_top - (float)n); a->redraw = true; return; }
         case GLFW_KEY_F: { int n = (int)visible_rows(a); modal_scroll(&a->modal, a->doc, &a->ss, n, visible_rows(a)); set_target_top(a, a->target_top + (float)n); a->redraw = true; return; }
@@ -854,7 +920,12 @@ static void app_on_key(App* a, int key, int scancode, int action, int mods)
 
 static void key_callback(GLFWwindow* w, int key, int scancode, int action, int mods)
 {
-    app_on_key((App*)glfwGetWindowUserPointer(w), key, scancode, action, mods);
+    App* a = (App*)glfwGetWindowUserPointer(w);
+    app_on_key(a, key, scancode, action, mods);
+    /* Feed the same key edge into the mu_input platform state so
+     * platform_key_down()/platform_key_pressed() stay current. */
+    platform_push_key(&a->platform, (uint32_t)(scancode >= 0 ? scancode : key),
+                      action == GLFW_PRESS);
 }
 
 static void app_on_char(App* a, unsigned int cp)
@@ -1494,6 +1565,13 @@ int main(int argc, char** argv)
         return 1;
     }
     glfwSetWindowUserPointer(a.window, &a);
+    if (!platform_init(&a.platform, a.window))
+    {
+        fprintf(stderr, "platform: cannot initialise input backend");
+        glfwDestroyWindow(a.window);
+        glfwTerminate();
+        return 1;
+    }
     glfwGetWindowContentScale(a.window, &xscale, &yscale);
     a.scale = (uint32_t)(xscale > yscale ? xscale : yscale);
     if (a.scale < 1u) a.scale = 1u;
@@ -1535,7 +1613,7 @@ int main(int argc, char** argv)
 
     /* Started on a folder: show the file picker for that folder immediately. */
     if (a.open_files_on_start)
-        open_picker_source(&a, PSRC_FILES);
+        open_picker_source(&a, PSRC_FILES, 0u);
 
     while (!glfwWindowShouldClose(a.window))
     {
@@ -1558,6 +1636,7 @@ int main(int argc, char** argv)
             timeout = a.cfg.smooth_blink ? 0.05
                                          : (double)(a.cfg.blink_ms % 1000u) / 1000.0;
         glfwWaitEventsTimeout(timeout);
+        platform_poll(&a.platform);
         if (a.term_active && a.term && terminal_poll(a.term)) a.redraw = true;
         if (a.picker) picker_poll(a.picker);
         if (a.parse_due && app_now_ms() >= a.parse_due)
@@ -1591,6 +1670,7 @@ int main(int argc, char** argv)
     MU_FREE(a.scratch);
     font_destroy(a.fs);
     bm_destroy(&a.bm);
+    platform_destroy(&a.platform);
     glfwDestroyWindow(a.window);
     glfwTerminate();
     return 0;
